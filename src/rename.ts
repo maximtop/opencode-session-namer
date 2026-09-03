@@ -16,22 +16,37 @@ import type {
 
 const DEFAULT_TITLE_RE = /^New session( - |$)/;
 
+/** Dependencies wired into the renamer by the plugin entry. */
 interface RenamerDeps {
+    /** opencode SDK client. */
     client: PluginClient;
+    /** Effective plugin configuration. */
     config: PluginConfig;
+    /** Issue key extractor built from the configured pattern. */
     extractAgKey: AgKeyExtractor;
+    /** Leveled logger bound to the opencode app log. */
     log: LogFn;
+    /** Rename-once persistence state. */
     state: State;
+    /** Per-session in-memory tracking map. */
     tracked: Map<string, TrackedSession>;
+    /** Marks a session as processed and persists the state file. */
     markProcessed: (id: string) => Promise<void>;
 }
 
+/** Title parts for composeTitle. */
 interface ComposeInput {
+    /** Project label, e.g. "filters registry". */
     project: string;
+    /** Issue key or null when none was found. */
     agKey: string | null;
+    /** Structural prefix kept as is (e.g. the PR reference). */
     keepPrefix?: string;
+    /** Descriptive part, shortened when the result is too long. */
     desc: string;
+    /** Session being renamed (smartShorten parent). */
     sessionID: string;
+    /** Working directory for smartShorten. */
     directory: string;
 }
 

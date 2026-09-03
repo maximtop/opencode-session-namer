@@ -68,6 +68,18 @@ module.exports = {
             },
         },
         {
+            files: ['src/**/*.ts'],
+            rules: {
+                'jsdoc/require-jsdoc': ['error', {
+                    contexts: [
+                        'TSInterfaceDeclaration',
+                        'TSTypeAliasDeclaration',
+                        'TSPropertySignature',
+                    ],
+                }],
+            },
+        },
+        {
             files: ['tests/**/*.ts'],
             rules: {
                 'jsdoc/require-jsdoc': 'off',

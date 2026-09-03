@@ -1,7 +1,13 @@
 import { truncateAtWord } from './text';
 import type { PluginClient, PluginConfig } from './types';
 
-type ModelRef = { providerID: string; modelID: string };
+/** A "provider/model" pair resolved to its two parts. */
+type ModelRef = {
+    /** Provider id, e.g. "anthropic". */
+    providerID: string;
+    /** Model id within the provider, e.g. "claude-haiku-4-5". */
+    modelID: string;
+};
 
 /**
  * Resolves the model used for shortening: the config override first, then
