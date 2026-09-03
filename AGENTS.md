@@ -29,7 +29,7 @@ The plugin is deterministic by default (no LLM calls). An optional
 
 ```text
 .
-├── index.ts                   # the plugin (SessionNamer export)
+├── src/index.ts               # the plugin (SessionNamer export)
 ├── tests/session-namer.test.ts  # vitest suite with a mock opencode client
 ├── package.json               # scripts and dev dependencies
 ├── tsconfig.json              # strict TS, noEmit

@@ -36,7 +36,7 @@ beforeAll(async () => {
     await fsp.writeFile(join(wtGitdir, 'HEAD'), 'ref: refs/heads/fix/AG-56856\n');
     await fsp.mkdir(worktree, { recursive: true });
     await fsp.writeFile(join(worktree, '.git'), `gitdir: ${wtGitdir}\n`);
-    const plugin = await import('../index');
+    const plugin = await import('../src/index');
     SessionNamer = plugin.SessionNamer;
 });
 

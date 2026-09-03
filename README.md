@@ -39,7 +39,7 @@ Or from a local checkout:
 
 ```sh
 git clone https://github.com/maximtop/opencode-session-namer
-ln -s "$PWD/opencode-session-namer/index.ts" \
+ln -s "$PWD/opencode-session-namer/src/index.ts" \
   ~/.config/opencode/plugins/session-namer.ts
 ```
 
