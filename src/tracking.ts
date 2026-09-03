@@ -1,6 +1,11 @@
 import type { TrackedSession } from './types';
 
-const DEFAULT_TITLE_RE = /^New session( - |$)/;
+/**
+ * Matches opencode's built-in default session titles ("New session - …").
+ * Shared with rename.ts so "what counts as a default title" lives in one
+ * place.
+ */
+export const DEFAULT_TITLE_RE = /^New session( - |$)/;
 
 /**
  * The parts of a tracked session that a title change may update.

@@ -1,6 +1,6 @@
 # opencode-session-namer
 
-An [opencode](https://opencode.ai) plugin that gives sessions meaningful names, once, right after the first reply — and never touches them again.
+An [opencode](https://opencode.ai) plugin that gives sessions meaningful names, once, right after the first user message — and never touches them again.
 
 ```
 [filters registry] Review pull/1226 Strips `version` and `timeUpdated` fields
@@ -21,7 +21,7 @@ An [opencode](https://opencode.ai) plugin that gives sessions meaningful names, 
 
 - **Renames exactly once per session** (tracked in a state file, survives restarts). Later manual renames are never overridden.
 - **A manual/external title is never replaced.** The plugin tracks title-change events: the first title set right after the first user message is assumed to be opencode's auto-title and may be replaced; any other title marks the session as foreign.
-- The rename fires ~10s after the first user message (falling back to the first `session.idle` for sessions restored before the plugin saw them). If the built-in auto-title lands after our rename but before the first idle, our title is re-applied exactly once — after the first idle, later changes (including manual renames) are never touched.
+- The rename fires ~10s after the first user message (falling back to the first `session.idle` for sessions restored before the plugin saw them). If a title recorded as the built-in auto-title is written again over ours before the first idle, our title is re-applied exactly once; a change from any other source — including a manual rename — wins immediately and closes that correction window. After the first idle, later changes are never touched.
 - No LLM calls by default; naming is deterministic. Failures never break the session — the plugin just logs and moves on.
 
 ## Install
@@ -39,8 +39,9 @@ Or from a local checkout:
 
 ```sh
 git clone https://github.com/maximtop/opencode-session-namer
-ln -s "$PWD/opencode-session-namer/src/index.ts" \
-  ~/.config/opencode/plugins/session-namer.ts
+cd opencode-session-namer
+pnpm install
+ln -s "$PWD/src/index.ts" ~/.config/opencode/plugins/session-namer.ts
 ```
 
 Restart opencode / OpenChamber to load the plugin.
@@ -78,8 +79,13 @@ When enabled, an overlong descriptive part is shortened by a small model through
   never passed to `gh`: `gh` forwards GitHub Enterprise tokens to whatever
   host `GH_HOST` names, so doing so would have exfiltrated the user's tokens
   to an attacker-controlled host. Enterprise hosts are simply not supported.
-- Titles are sanitized of C0/C1 control characters before `session.update`,
-  so a crafted PR title or model reply cannot inject terminal sequences.
+- Titles are sanitized of C0/C1 control characters and Unicode format
+  characters (bidi overrides, zero-width) before `session.update`, so a
+  crafted PR title or model reply can neither inject terminal sequences nor
+  spoof how the title displays.
+- The LLM helpers (`smartShorten`, `prLinkLlm`) run in throwaway child
+  sessions with all tools disabled and a fixed system prompt, so a crafted
+  PR title or message cannot turn them into an agent.
 - The plugin never logs tokens or other secrets.
 
 ## Requirements

@@ -1,16 +1,17 @@
 /**
  * opencode-session-namer — gives opencode sessions meaningful names.
  *
- * What it does, once per session, shortly after the first reply settles:
+ * What it does, once per session, right after the first user message:
  * - PR link in the first message → [<repo>] [<key>] Review pull/<N> <title>
  * - otherwise, inside a git project → [<project>] [<key>] <auto-title>
  *
- * The issue key (e.g. AG-123) comes from the PR branch/title or the worktree
- * branch — no issue-tracker API calls. Worktrees are detected generically
- * through the `.git` file, so the label is the main repo name and the key
- * comes from the worktree branch. A title set by anything other than the
- * built-in auto-title (manual rename, another tool) marks the session as
- * foreign and it is never renamed. A session is renamed at most once, ever.
+ * The issue key (e.g. AG-123) comes from the PR branch/title or the branch
+ * recorded in `.git/HEAD` — no issue-tracker API calls. Linked worktrees are
+ * detected generically through the `.git` file, so the label is the main
+ * repo name and the key comes from the worktree branch. A title set by
+ * anything other than the built-in auto-title (manual rename, another tool)
+ * marks the session as foreign and it is never renamed. A session is
+ * renamed at most once, ever.
  */
 
 import type { Plugin } from '@opencode-ai/plugin';
@@ -18,11 +19,17 @@ import { loadConfig } from './config';
 import { loadState, saveState } from './state';
 import { createRenamer } from './rename';
 import { classifyTitleChange } from './tracking';
-import type { AgKeyExtractor, LogFn, TrackedSession } from './types';
+import type {
+    AgKeyExtractor,
+    LogFn,
+    SessionInfo,
+    TrackedSession,
+} from './types';
 
 /**
  * The plugin factory. Loads config and state, wires the renamer and returns
- * the event hook that schedules a one-time rename after the first idle.
+ * the event hook that schedules a one-time rename on the first user
+ * message, with the first idle as fallback.
  * @param ctx plugin context provided by opencode
  * @param ctx.client opencode SDK client
  * @returns plugin hooks
@@ -52,8 +59,8 @@ export const SessionNamer: Plugin = async ({ client }) => {
     const state = await loadState();
     const tracked = new Map<string, TrackedSession>();
 
-    const recordFor = (id: string): TrackedSession => {
-        let rec = tracked.get(id);
+    const recordFor = (sessionID: string): TrackedSession => {
+        let rec = tracked.get(sessionID);
         if (!rec) {
             rec = {
                 sawUserMessage: false,
@@ -61,28 +68,39 @@ export const SessionNamer: Plugin = async ({ client }) => {
                 foreign: false,
                 scheduled: false,
                 lastTitle: undefined,
+                renameAttempts: 0,
             };
-            tracked.set(id, rec);
+            tracked.set(sessionID, rec);
         }
         return rec;
     };
 
     const markProcessed = async (
-        id: string,
+        sessionID: string,
         appliedTitle?: string,
     ): Promise<void> => {
-        state.processed[id] = Date.now();
+        state.processed[sessionID] = Date.now();
         if (appliedTitle) {
-            state.appliedTitles[id] = appliedTitle;
+            state.appliedTitles[sessionID] = appliedTitle;
         }
-        await saveState(state);
+        await saveState(state, log);
     };
 
-    const releaseScheduled = (id: string): void => {
-        const rec = tracked.get(id);
+    const releaseScheduled = (sessionID: string): void => {
+        const rec = tracked.get(sessionID);
         if (rec) {
             rec.scheduled = false;
         }
+    };
+
+    /**
+     * Forgets the title we applied, closing the late-auto-title correction
+     * window, and persists the state.
+     * @param sessionID session whose applied title is dropped
+     */
+    const forgetAppliedTitle = async (sessionID: string): Promise<void> => {
+        delete state.appliedTitles[sessionID];
+        await saveState(state, log);
     };
 
     const rename = createRenamer({
@@ -123,15 +141,102 @@ export const SessionNamer: Plugin = async ({ client }) => {
         }, config.renameDelayMs);
     };
 
+    /**
+     * Re-applies our title exactly once when a late re-write of the recorded
+     * auto-title overwrites it before the first idle. A title from any other
+     * source — a manual rename, another tool — is never touched: it wins and
+     * closes the correction window.
+     * @param sessionID session whose title changed
+     * @param info session info from the session.updated event
+     */
+    const correctLateAutoTitle = async (
+        sessionID: string,
+        info: SessionInfo,
+    ): Promise<void> => {
+        const applied = state.appliedTitles[sessionID];
+        if (!applied || info.title === applied) {
+            return;
+        }
+        const rec = tracked.get(sessionID);
+        if (rec?.autoTitle === undefined || info.title !== rec.autoTitle) {
+            await forgetAppliedTitle(sessionID);
+            return;
+        }
+        const res = await client.session.update({
+            path: { id: sessionID },
+            query: { directory: info.directory },
+            body: { title: applied },
+        });
+        if (res.error) {
+            // keep the correction armed — a later title change may retry
+            log('warn', 'title re-apply failed, kept for retry', {
+                sessionID,
+                error: JSON.stringify(res.error),
+            });
+            return;
+        }
+        await forgetAppliedTitle(sessionID);
+        log('info', 'restored title over late auto-title', {
+            sessionID,
+            title: applied,
+        });
+    };
+
+    /**
+     * Routes a title change: classification for unprocessed sessions, the
+     * bounded correction window for processed ones.
+     * @param info session info from the session.updated event
+     */
+    const onSessionUpdated = async (
+        info: SessionInfo | undefined,
+    ): Promise<void> => {
+        if (!info?.id) {
+            return;
+        }
+        if (state.processed[info.id]) {
+            await correctLateAutoTitle(info.id, info);
+            return;
+        }
+        const rec = recordFor(info.id);
+        const patch = classifyTitleChange(rec, info.title ?? '');
+        rec.foreign = patch.foreign;
+        rec.autoTitle = patch.autoTitle;
+        rec.lastTitle = patch.lastTitle;
+    };
+
+    /**
+     * Handles the idle fallback: ends the correction window for processed
+     * sessions, retires foreign ones, re-arms the rename for the rest.
+     * @param sessionID session that went idle
+     */
+    const onSessionIdle = async (sessionID: string): Promise<void> => {
+        if (state.processed[sessionID]) {
+            // the correction window ends at the first idle after the
+            // rename — drop the tracked record then
+            tracked.delete(sessionID);
+            await forgetAppliedTitle(sessionID);
+            return;
+        }
+        const rec = recordFor(sessionID);
+        if (rec.foreign) {
+            // foreign sessions are never renamed — stop tracking them
+            await markProcessed(sessionID);
+            tracked.delete(sessionID);
+            return;
+        }
+        schedule(sessionID);
+    };
+
     return {
         /**
          * Tracks sessions and schedules the rename. `message.updated` is the
          * fast path (rename right after the first user message — long first
          * turns would otherwise delay the rename until the first idle).
          * `session.updated` tells the built-in auto-title apart from manual
-         * renames and corrects a late auto-title write over our title once,
-         * before the first idle. `session.idle` is the fallback path for
-         * sessions restored before the plugin saw their first message.
+         * renames and corrects a late re-write of the recorded auto-title
+         * once, before the first idle. `session.idle` is the fallback path
+         * for sessions restored before the plugin saw their first message.
+         * `session.deleted` drops tracking for removed sessions.
          * @param input opencode event envelope
          * @param input.event the event payload
          */
@@ -144,34 +249,15 @@ export const SessionNamer: Plugin = async ({ client }) => {
                     }
                     return;
                 }
+                if (event.type === 'session.deleted') {
+                    const sessionID = event.properties?.info?.id;
+                    if (sessionID) {
+                        tracked.delete(sessionID);
+                    }
+                    return;
+                }
                 if (event.type === 'session.updated') {
-                    const info = event.properties?.info;
-                    if (!info?.id) {
-                        return;
-                    }
-                    const applied = state.appliedTitles[info.id];
-                    if (state.processed[info.id]) {
-                        // a late auto-title write overwrote our title before
-                        // the first idle — re-apply ours exactly once
-                        if (applied && info.title !== applied) {
-                            delete state.appliedTitles[info.id];
-                            await saveState(state);
-                            await client.session.update({
-                                path: { id: info.id },
-                                body: { title: applied },
-                            });
-                            log('info', 'restored title over late auto-title', {
-                                sessionID: info.id,
-                                title: applied,
-                            });
-                        }
-                        return;
-                    }
-                    const rec = recordFor(info.id);
-                    const patch = classifyTitleChange(rec, info.title);
-                    rec.foreign = patch.foreign;
-                    rec.autoTitle = patch.autoTitle;
-                    rec.lastTitle = patch.lastTitle;
+                    await onSessionUpdated(event.properties?.info);
                     return;
                 }
                 if (event.type === 'message.updated') {
@@ -188,22 +274,9 @@ export const SessionNamer: Plugin = async ({ client }) => {
                 }
                 if (event.type === 'session.idle') {
                     const sessionID = event.properties?.sessionID;
-                    if (!sessionID) {
-                        return;
+                    if (sessionID) {
+                        await onSessionIdle(sessionID);
                     }
-                    if (state.processed[sessionID]) {
-                        // the re-apply window ends at the first idle after
-                        // the rename — drop the tracked record then
-                        tracked.delete(sessionID);
-                        delete state.appliedTitles[sessionID];
-                        await saveState(state);
-                        return;
-                    }
-                    const rec = recordFor(sessionID);
-                    if (rec.foreign) {
-                        return;
-                    }
-                    schedule(sessionID);
                 }
             } catch (e) {
                 log('error', 'event handler failed', {

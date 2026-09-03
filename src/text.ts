@@ -30,9 +30,10 @@ export function truncateAtWord(text: string, max: number): string {
 }
 
 /**
- * Substsitutes {slot} placeholders without any normalization: separators and
- * whitespace stay exactly as written. Used where the surrounding text must
- * keep its exact spacing (e.g. prPrefix' trailing space).
+ * Substitutes {slot} placeholders without whitespace normalization. An
+ * empty slot drops the separator that follows it; every other byte stays
+ * exactly as written. Used where the surrounding text must keep its exact
+ * spacing (e.g. prPrefix' trailing space).
  * @param template template string with {slot} placeholders
  * @param slots slot values; unknown slots render empty
  * @returns rendered string
@@ -72,15 +73,15 @@ export function applyTemplate(
 
 /**
  * Derives a fallback title from the first line of the user message.
- * @param messageText first user message text
+ * @param text first user message text
  * @param maxLength length cap for the derived part
  * @returns derived title or null
  */
 export function deriveBase(
-    messageText: string,
+    text: string,
     maxLength: number,
 ): string | null {
-    const line = messageText
+    const line = text
         .split('\n')
         .map((l) => l.trim())
         .find((l) => l.length > 0);

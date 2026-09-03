@@ -3,21 +3,23 @@
 ## Project Overview
 
 opencode-session-namer is a plugin for [opencode](https://opencode.ai) that
-renames sessions to a meaningful, uniform format once per session, shortly
-after the first reply settles:
+renames sessions to a meaningful, uniform format once per session, right
+after the first user message:
 
 - PR link in the first user message → `[repo] KEY-123 Review pull/N <PR title>`
 - otherwise, inside a git project → `[project] KEY-123 <opencode auto-title>`
 
-The plugin is deterministic by default (no LLM calls). An optional
-`smartShorten` mode uses a small model to shorten overlong titles.
+The plugin is deterministic by default (no LLM calls). Optional LLM modes —
+`smartShorten` (shorten overlong titles) and `prLinkLlm` (ask which PR the
+first message references) — run in throwaway child sessions with all tools
+disabled.
 
 ## Technical Context
 
 - **Language**: TypeScript, strict mode, ES2022.
 - **Runtime**: loaded by opencode's plugin system (Bun); plain Node APIs only
   (`node:fs/promises`, `node:child_process`), no Bun-specific imports.
-- **Dependencies**: none at runtime. Dev: vitest, eslint (airbnb +
+- **Dependencies**: zod at runtime. Dev: vitest, eslint (airbnb +
   airbnb-typescript + jsdoc), typescript.
 - **External tools**: `gh` CLI for PR title/branch lookup (optional; the
   plugin degrades to URL-only naming without it).
@@ -35,6 +37,7 @@ The plugin is deterministic by default (no LLM calls). An optional
 │   ├── shorten.ts             # smartShorten via a throwaway child session
 │   ├── project.ts             # directory/worktree → project label
 │   ├── pr-link.ts             # PR link extraction from the first message
+│   ├── pr-link-llm.ts         # LLM fallback: which PR the message references
 │   ├── github.ts              # gh CLI PR info lookup
 │   ├── config.ts              # user config loading
 │   ├── state.ts               # rename-once state file
@@ -74,6 +77,7 @@ The plugin is deterministic by default (no LLM calls). An optional
 ## Testing
 
 Tests drive the plugin's event hook with a mock SDK client (no server). PR
-cases hit the real `gh` CLI. Fixtures (fake git project, fake worktree) are
-created under `.test-fixtures/` next to the repo because the plugin ignores
-sessions in temp/scratch directories.
+cases hit the real `gh` CLI. Fixtures (plain git projects — one on a keyed
+branch — and a linked-worktree pair) are created under `.test-fixtures/`
+next to the repo because the plugin ignores sessions in temp/scratch
+directories.

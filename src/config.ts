@@ -2,17 +2,18 @@ import { promises as fsp } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { z } from 'zod';
+import type { PluginConfig } from './types';
 
 const CONFIG_FILE = process.env.SESSION_NAMER_CONFIG
     ?? join(homedir(), '.config', 'opencode', 'session-namer.json');
 
-const DEFAULTS = {
+const DEFAULTS: PluginConfig = {
     template: '[{project}] {agKey} {title}',
     prPrefix: 'Review pull/{number} ',
     agKeyPattern: '[A-Z][A-Z0-9]{1,9}-\\d+',
     maxLength: 90,
     smartShorten: false,
-    smartShortenModel: null as string | null,
+    smartShortenModel: null,
     prLinkLlm: false,
     renameDelayMs: 10000,
 };
@@ -36,9 +37,9 @@ function positiveInt(fallback: number) {
 }
 
 const ConfigSchema = z.object({
-    template: z.string().catch(DEFAULTS.template),
+    template: z.string().min(1).catch(DEFAULTS.template),
     prPrefix: z.string().catch(DEFAULTS.prPrefix),
-    agKeyPattern: z.string().catch(DEFAULTS.agKeyPattern),
+    agKeyPattern: z.string().min(1).catch(DEFAULTS.agKeyPattern),
     maxLength: positiveInt(DEFAULTS.maxLength),
     smartShorten: z.boolean().catch(DEFAULTS.smartShorten),
     smartShortenModel: z.string().nullable().catch(DEFAULTS.smartShortenModel),
@@ -46,15 +47,15 @@ const ConfigSchema = z.object({
     renameDelayMs: positiveInt(DEFAULTS.renameDelayMs),
 });
 
-/**
- * Effective plugin configuration (user file merged over the defaults),
- * inferred from the validation schema so the shape lives in one place.
- */
-export type PluginConfig = z.infer<typeof ConfigSchema>;
+// loadConfig assigns the schema output to a PluginConfig-typed variable, so
+// the schema shape drifting from the type in types.ts fails type-check.
+
+const delayMsOverride = positiveInt(DEFAULTS.renameDelayMs);
 
 /**
- * Applies the SESSION_NAMER_DELAY_MS env override (non-negative number,
- * defaults on garbage). Test hook.
+ * Applies the SESSION_NAMER_DELAY_MS env override through the same
+ * positive-int coercion as the file keys (garbage, zero and negatives fall
+ * back to the default). Test hook.
  * @param config config loaded from the user file and defaults
  * @returns config with the env override applied
  */
@@ -63,11 +64,7 @@ function applyEnvOverride(config: PluginConfig): PluginConfig {
     if (raw === undefined || raw === '') {
         return config;
     }
-    const num = Number(raw);
-    if (Number.isFinite(num) && num >= 0) {
-        return { ...config, renameDelayMs: num };
-    }
-    return config;
+    return { ...config, renameDelayMs: delayMsOverride.parse(raw) };
 }
 
 /**
@@ -82,8 +79,12 @@ export async function loadConfig(): Promise<PluginConfig> {
     } catch {
         raw = {};
     }
-    const obj = raw && typeof raw === 'object' && !Array.isArray(raw)
-        ? raw
-        : {};
-    return applyEnvOverride(ConfigSchema.parse(obj));
+    let parsed: PluginConfig;
+    try {
+        parsed = ConfigSchema.parse(raw);
+    } catch {
+        // the top level is not a plain object (array/scalar) — all defaults
+        parsed = ConfigSchema.parse({});
+    }
+    return applyEnvOverride(parsed);
 }

@@ -11,6 +11,7 @@ import {
     humanize,
     truncateAtWord,
 } from './text';
+import { DEFAULT_TITLE_RE } from './tracking';
 import type {
     AgKeyExtractor,
     LogFn,
@@ -22,7 +23,29 @@ import type {
     TrackedSession,
 } from './types';
 
-const DEFAULT_TITLE_RE = /^New session( - |$)/;
+/**
+ * Rename attempts without any user text before the session is given up —
+ * bounds the refetch-every-idle loop for all-synthetic sessions.
+ */
+const MAX_RENAME_ATTEMPTS = 10;
+
+/**
+ * Matches Unicode format characters (Cf) — bidi overrides, zero-width
+ * spaces, the BOM — that C0/C1 filtering alone lets through and that can
+ * spoof how a title displays.
+ */
+const FORMAT_CHAR_RE = /\p{Cf}/u;
+
+/**
+ * Escapes a string for literal use inside a RegExp. Issue keys come from
+ * externally supplied branch/PR titles via the configured pattern, so they
+ * can contain regex metacharacters.
+ * @param value raw string
+ * @returns escaped string
+ */
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 /**
  * Dependencies wired into the renamer by the plugin entry.
@@ -57,11 +80,11 @@ interface RenamerDeps {
      * title is kept until the session first goes idle so a late auto-title
      * write can be corrected once.
      */
-    markProcessed: (id: string, appliedTitle?: string) => Promise<void>;
+    markProcessed: (sessionID: string, appliedTitle?: string) => Promise<void>;
     /**
      * Releases the scheduled latch so a later idle can retry.
      */
-    releaseScheduled: (id: string) => void;
+    releaseScheduled: (sessionID: string) => void;
 }
 
 /**
@@ -98,7 +121,8 @@ interface ComposeInput {
  * Wires the rename orchestration: reads the session, decides the new title
  * (PR-based or project-based) and writes it once.
  * @param deps plugin dependencies
- * @returns rename function that reports whether the outcome is terminal
+ * @returns rename function; retryable outcomes release the scheduled latch
+ * so a later idle re-arms the rename
  */
 export function createRenamer(deps: RenamerDeps) {
     const {
@@ -180,7 +204,10 @@ export function createRenamer(deps: RenamerDeps) {
         // PR titles often start with the issue key ("AG-31699: Add …") —
         // don't repeat it after the prefix.
         const title = info?.title && agKey
-            ? info.title.replace(new RegExp(`^${agKey}[:\\s-]*`), '')
+            ? info.title.replace(
+                new RegExp(`^${escapeRegExp(agKey)}[:\\s-]*`),
+                '',
+            )
             : info?.title ?? null;
         const prefix = expandSlots(config.prPrefix, { number: pr.number });
         return composeTitle({
@@ -194,17 +221,21 @@ export function createRenamer(deps: RenamerDeps) {
     }
 
     /**
-     * Removes C0/C1 control characters so externally sourced titles cannot
-     * inject terminal control sequences.
+     * Removes C0/C1 control characters and Unicode format characters (bidi
+     * overrides, zero-width) so externally sourced titles can neither inject
+     * terminal control sequences nor spoof how the title displays.
      * @param input title under construction
      * @returns sanitized title
      */
     function sanitize(input: string): string {
         return Array.from(input)
             .filter((ch) => {
-                const code = ch.charCodeAt(0);
+                const code = ch.codePointAt(0) ?? 0;
                 const printable = code < 128 || code >= 160;
-                return code >= 32 && code !== 127 && printable;
+                return code >= 32
+                    && code !== 127
+                    && printable
+                    && !FORMAT_CHAR_RE.test(ch);
             })
             .join('');
     }
@@ -212,18 +243,22 @@ export function createRenamer(deps: RenamerDeps) {
     /**
      * Renames the session if it is eligible: not processed yet, not foreign,
      * not a sub-agent session, and the current title is either default or
-     * the recorded auto-title.
+     * the recorded auto-title. Retryable outcomes (transient reads, a failed
+     * title write, no user message yet) release the scheduled latch so a
+     * later idle re-arms the rename.
      * @param sessionID session to rename
-     * @returns true when the outcome is terminal, false to retry later
      */
-    return async function rename(sessionID: string): Promise<boolean> {
+    return async function rename(sessionID: string): Promise<void> {
         if (state.processed[sessionID]) {
-            return true;
+            return;
         }
         const rec = tracked.get(sessionID);
         if (rec?.foreign) {
+            log('info', 'skipping session with a foreign title', {
+                sessionID,
+            });
             await markProcessed(sessionID);
-            return true;
+            return;
         }
 
         const got = await client.session.get({ path: { id: sessionID } });
@@ -231,12 +266,13 @@ export function createRenamer(deps: RenamerDeps) {
         if (!session) {
             // transient — try again on a later idle
             releaseScheduled(sessionID);
-            return false;
+            return;
         }
         if (session.parentID) {
             // subagent sessions name themselves
+            log('info', 'skipping sub-agent session', { sessionID });
             await markProcessed(sessionID);
-            return true;
+            return;
         }
 
         const isDefault = DEFAULT_TITLE_RE.test(session.title);
@@ -246,21 +282,36 @@ export function createRenamer(deps: RenamerDeps) {
             const isAutoTitle = rec?.autoTitle !== undefined
                 && session.title === rec.autoTitle;
             if (!isAutoTitle) {
+                log('info', 'skipping title not produced by the auto-title', {
+                    sessionID,
+                });
                 await markProcessed(sessionID);
-                return true;
+                return;
             }
         }
 
         const messages = await client.session.messages({
             path: { id: sessionID },
-            query: { directory: session.directory, limit: 200 },
+            query: { directory: session.directory, limit: 25 },
         });
         const text = messageText(messages.data ?? [], 'user', 'first');
         if (!text) {
-            // no user message yet (idle before the first message) — do not
-            // burn the session; a later idle will retry
+            // no user message yet (idle before the first message) — retry
+            // on a later idle, but give up on sessions that never get one
+            const attempts = (rec?.renameAttempts ?? 0) + 1;
+            if (rec) {
+                rec.renameAttempts = attempts;
+            }
+            if (attempts > MAX_RENAME_ATTEMPTS) {
+                log('warn', 'giving up: still no user message', {
+                    sessionID,
+                    attempts,
+                });
+                await markProcessed(sessionID);
+                return;
+            }
             releaseScheduled(sessionID);
-            return false;
+            return;
         }
 
         let title: string | null = null;
@@ -301,16 +352,26 @@ export function createRenamer(deps: RenamerDeps) {
 
         const safe = title ? sanitize(title) : null;
         if (safe && safe !== session.title) {
-            await client.session.update({
+            const res = await client.session.update({
                 path: { id: sessionID },
                 query: { directory: session.directory },
                 body: { title: safe },
             });
+            if (res.error) {
+                // a failed write must not consume the rename-once budget —
+                // retry on a later idle
+                log('warn', 'title write failed, will retry on next idle', {
+                    sessionID,
+                    error: JSON.stringify(res.error),
+                });
+                releaseScheduled(sessionID);
+                return;
+            }
             log('info', 'renamed session', { sessionID, title: safe });
             await markProcessed(sessionID, safe);
-            return true;
+            return;
         }
+        log('info', 'no rename needed', { sessionID });
         await markProcessed(sessionID);
-        return true;
     };
 }

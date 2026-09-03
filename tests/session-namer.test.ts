@@ -8,7 +8,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect, beforeAll } from 'vitest';
 import type { Plugin } from '@opencode-ai/plugin';
-import type { PluginConfig } from '../src/config';
+import type { PluginClient, PluginConfig } from '../src/types';
 import { findPrUrl } from '../src/pr-link';
 
 const tmp = await fsp.mkdtemp(join(tmpdir(), 'session-namer-test-'));
@@ -24,25 +24,28 @@ type Hooks = NonNullable<Awaited<ReturnType<Plugin>>>;
  * The plugin context type (used to type the mocked context).
  */
 type Ctx = Parameters<Plugin>[0];
-/**
- * The SDK client type the plugin receives.
- */
-type PluginClient = Ctx['client'];
 
 let SessionNamer: Plugin;
 
-// Portable fixtures: a plain git project and a linked-worktree pair.
-// They live next to this file (not in tmp) because the plugin deliberately
-// ignores sessions whose directory is inside a temp/scratch location.
+// Portable fixtures: plain git projects (one on a keyed branch, one
+// branchless) and a linked-worktree pair. They live next to this file (not
+// in tmp) because the plugin deliberately ignores sessions whose directory
+// is inside a temp/scratch location.
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const fixtures = join(repoRoot, '.test-fixtures');
 const gitProject = join(fixtures, 'browser-extension');
+const keyedProject = join(fixtures, 'keyed-project');
 const mainRepo = join(fixtures, 'main-repo');
 const wtGitdir = join(mainRepo, '.git', 'worktrees', 'fix-AG-56856');
 const worktree = join(fixtures, 'wt', 'fix-AG-56856');
 
 beforeAll(async () => {
     await fsp.mkdir(join(gitProject, '.git'), { recursive: true });
+    await fsp.mkdir(join(keyedProject, '.git'), { recursive: true });
+    await fsp.writeFile(
+        join(keyedProject, '.git', 'HEAD'),
+        'ref: refs/heads/feature/AG-12345\n',
+    );
     await fsp.mkdir(wtGitdir, { recursive: true });
     await fsp.writeFile(join(wtGitdir, 'HEAD'), 'ref: refs/heads/fix/AG-56856\n');
     await fsp.mkdir(worktree, { recursive: true });
@@ -108,6 +111,11 @@ interface MockOptions {
      */
     failCreate?: boolean;
     /**
+     * Fail this many first session.update calls with an SDK-style error
+     * (simulates a transient server error on the title write).
+     */
+    failUpdates?: number;
+    /**
      * When set, session.messages returns no user text until the predicate
      * yields true (simulates an idle before the first message).
      */
@@ -127,9 +135,10 @@ interface MockOptions {
 function makeClient(options: MockOptions) {
     const {
         session, firstUserText, shortenReply, failCreate, suppressUserTextUntil,
-        userTexts,
+        userTexts, failUpdates,
     } = options;
     const updates: Array<{ body: { title?: string } }> = [];
+    let failedUpdates = failUpdates ?? 0;
     const childCalls = {
         created: 0, prompted: 0, deleted: 0, lastPrompt: null as string | null,
     };
@@ -165,6 +174,10 @@ function makeClient(options: MockOptions) {
                 };
             },
             update: async (opts: { body: { title?: string } }) => {
+                if (failedUpdates > 0) {
+                    failedUpdates -= 1;
+                    return { error: { message: 'boom' } };
+                }
                 updates.push(opts);
                 if (opts.body.title) {
                     session.title = opts.body.title;
@@ -217,6 +230,16 @@ interface DriveOptions {
 }
 
 /**
+ * Sleeps for the given number of milliseconds.
+ * @param ms duration
+ */
+async function sleep(ms: number): Promise<void> {
+    await new Promise((r) => {
+        setTimeout(r, ms);
+    });
+}
+
+/**
  * Polls a condition until it holds or the timeout elapses.
  * @param cond condition to poll
  * @param timeoutMs polling timeout
@@ -231,11 +254,18 @@ async function waitFor(
         if (cond()) {
             return true;
         }
-        await new Promise((r) => {
-            setTimeout(r, 100);
-        });
+        await sleep(100);
     }
     return cond();
+}
+
+/**
+ * Feeds one event envelope through the plugin hook.
+ * @param hooks plugin hooks under test
+ * @param event event payload
+ */
+async function emit(hooks: Hooks, event: unknown): Promise<void> {
+    await hooks.event?.({ event: event as never });
 }
 
 /**
@@ -254,39 +284,38 @@ async function drive(
     const {
         autoTitle, foreignTitle, updates, expectUpdate = true,
     } = options;
-    const emit = async (event: unknown) => {
-        await hooks.event?.({ event: event as never });
-    };
-    await emit({ type: 'session.created', properties: { info: { ...session } } });
-    await emit({
+    await emit(hooks, {
+        type: 'session.created',
+        properties: { info: { ...session } },
+    });
+    await emit(hooks, {
         type: 'message.updated',
         properties: { info: { role: 'user', sessionID: session.id } },
     });
     if (autoTitle) {
         session.title = autoTitle;
-        await emit({
+        await emit(hooks, {
             type: 'session.updated',
             properties: { info: { ...session } },
         });
     }
     if (foreignTitle) {
         session.title = foreignTitle;
-        await emit({
+        await emit(hooks, {
             type: 'session.updated',
             properties: { info: { ...session } },
         });
     }
-    await emit({ type: 'session.idle', properties: { sessionID: session.id } });
+    await emit(hooks, {
+        type: 'session.idle',
+        properties: { sessionID: session.id },
+    });
     if (expectUpdate) {
         await waitFor(() => updates.length > 0);
     } else {
-        await new Promise((r) => {
-            setTimeout(r, 800);
-        });
+        await sleep(800);
     }
-    await new Promise((r) => {
-        setTimeout(r, 300);
-    });
+    await sleep(300);
 }
 
 /**
@@ -365,6 +394,50 @@ describe('session-namer', () => {
         expect(updates[0]?.body.title).toBe('[main-repo] AG-56856 Continue stealth fix');
     });
 
+    it('picks the issue key from a regular checkout branch', async () => {
+        await writeConfig({});
+        const session = freshSession({ directory: keyedProject });
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: 'fix it',
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await drive(hooks, session, { autoTitle: 'Fixing the flaky test', updates });
+        expect(updates).toHaveLength(1);
+        expect(updates[0]?.body.title).toBe(
+            '[keyed-project] AG-12345 Fixing the flaky test',
+        );
+    });
+
+    it('retries the rename when the title write fails', async () => {
+        await writeConfig({});
+        const session = freshSession({ directory: gitProject });
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: 'fix the thing',
+            failUpdates: 1,
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await emit(hooks, {
+            type: 'session.created',
+            properties: { info: { ...session } },
+        });
+        await emit(hooks, {
+            type: 'message.updated',
+            properties: { info: { role: 'user', sessionID: session.id } },
+        });
+        // the first attempt's write fails — nothing recorded, nothing burned
+        await sleep(200);
+        expect(updates).toHaveLength(0);
+        // a later idle re-arms the rename and it succeeds
+        await emit(hooks, {
+            type: 'session.idle',
+            properties: { sessionID: session.id },
+        });
+        await waitFor(() => updates.length > 0);
+        expect(updates[0]?.body.title).toBe('[browser-extension] fix the thing');
+    });
+
     it('never overrides a manual rename', async () => {
         await writeConfig({});
         const session = freshSession();
@@ -427,12 +500,11 @@ describe('session-namer', () => {
         await drive(hooks, session, { autoTitle: 'Feature work', updates });
         expect(updates).toHaveLength(1);
         session.title = 'renamed by user later';
-        await hooks.event?.({
-            event: { type: 'session.idle', properties: { sessionID: session.id } } as never,
+        await emit(hooks, {
+            type: 'session.idle',
+            properties: { sessionID: session.id },
         });
-        await new Promise((r) => {
-            setTimeout(r, 200);
-        });
+        await sleep(200);
         expect(updates).toHaveLength(1);
         expect(session.title).toBe('renamed by user later');
     });
@@ -528,6 +600,7 @@ describe('classifyTitleChange (title provenance)', () => {
         foreign: false,
         scheduled: false,
         lastTitle: undefined,
+        renameAttempts: 0,
     });
 
     const applyTo = (rec: ReturnType<typeof freshRec>, patch: {
@@ -613,34 +686,31 @@ describe('idle before the first user message', () => {
             suppressUserTextUntil: () => sent,
         });
         const hooks = await SessionNamer({ client } as Ctx);
-        await hooks.event?.({
-            event: { type: 'session.created', properties: { info: { ...session } } },
-        } as never);
-        await hooks.event?.({
-            event: { type: 'session.idle', properties: { sessionID: session.id } },
-        } as never);
-        await new Promise((r) => {
-            setTimeout(r, 400);
+        await emit(hooks, {
+            type: 'session.created',
+            properties: { info: { ...session } },
         });
+        await emit(hooks, {
+            type: 'session.idle',
+            properties: { sessionID: session.id },
+        });
+        await sleep(400);
         expect(updates).toHaveLength(0);
         expect(session.title).toBe('New session - 2026-09-03T10:00:00.000Z');
         sent = true;
-        await hooks.event?.({
-            event: {
-                type: 'message.updated',
-                properties: { info: { role: 'user', sessionID: session.id } },
-            },
-        } as never);
+        await emit(hooks, {
+            type: 'message.updated',
+            properties: { info: { role: 'user', sessionID: session.id } },
+        });
         session.title = 'Fixing the flaky test';
-        await hooks.event?.({
-            event: {
-                type: 'session.updated',
-                properties: { info: { ...session } },
-            },
-        } as never);
-        await hooks.event?.({
-            event: { type: 'session.idle', properties: { sessionID: session.id } },
-        } as never);
+        await emit(hooks, {
+            type: 'session.updated',
+            properties: { info: { ...session } },
+        });
+        await emit(hooks, {
+            type: 'session.idle',
+            properties: { sessionID: session.id },
+        });
         await waitFor(() => updates.length > 0);
         expect(updates[0]?.body.title).toBe('[browser-extension] Fixing the flaky test');
     });
@@ -674,25 +744,23 @@ describe('first-message semantics', () => {
         });
         const hooks = await SessionNamer({ client } as Ctx);
         // the first user message has only a non-text part (no text)
-        await hooks.event?.({
-            event: { type: 'session.created', properties: { info: { ...session } } },
-        } as never);
-        await hooks.event?.({
-            event: {
-                type: 'message.updated',
-                properties: { info: { role: 'user', sessionID: session.id } },
-            },
-        } as never);
+        await emit(hooks, {
+            type: 'session.created',
+            properties: { info: { ...session } },
+        });
+        await emit(hooks, {
+            type: 'message.updated',
+            properties: { info: { role: 'user', sessionID: session.id } },
+        });
         session.title = 'Review pull request';
-        await hooks.event?.({
-            event: {
-                type: 'session.updated',
-                properties: { info: { ...session } },
-            },
-        } as never);
-        await hooks.event?.({
-            event: { type: 'session.idle', properties: { sessionID: session.id } },
-        } as never);
+        await emit(hooks, {
+            type: 'session.updated',
+            properties: { info: { ...session } },
+        });
+        await emit(hooks, {
+            type: 'session.idle',
+            properties: { sessionID: session.id },
+        });
         await waitFor(() => updates.length > 0);
         expect(updates[0]?.body.title).toContain('pull/1226');
     }, 30000);
@@ -707,26 +775,20 @@ describe('fast message-triggered rename', () => {
             firstUserText: 'fix the thing',
         });
         const hooks = await SessionNamer({ client } as Ctx);
-        await hooks.event?.({
-            event: { type: 'session.created', properties: { info: { ...session } } },
-        } as never);
-        await hooks.event?.({
-            event: {
-                type: 'message.updated',
-                properties: { info: { role: 'user', sessionID: session.id } },
-            },
-        } as never);
+        await emit(hooks, {
+            type: 'session.created',
+            properties: { info: { ...session } },
+        });
+        await emit(hooks, {
+            type: 'message.updated',
+            properties: { info: { role: 'user', sessionID: session.id } },
+        });
         // no idle event at all
         await waitFor(() => updates.length > 0);
-        expect(updates[0]?.body.title).toBe(
-            '[browser-extension] Fixing the flaky test'.includes('fix')
-                ? updates[0]?.body.title
-                : updates[0]?.body.title,
-        );
         expect(updates[0]?.body.title).toBe('[browser-extension] fix the thing');
     });
 
-    it('re-applies our title once when the auto-title lands after the rename', async () => {
+    it('re-applies our title over a late duplicate of the recorded auto-title', async () => {
         await writeConfig({});
         const session = freshSession({ directory: gitProject });
         const { client, updates } = makeClient({
@@ -734,51 +796,96 @@ describe('fast message-triggered rename', () => {
             firstUserText: 'fix the thing',
         });
         const hooks = await SessionNamer({ client } as Ctx);
-        const emit = async (event: unknown) => {
-            await hooks.event?.({ event: event as never });
-        };
-        await emit({
+        await emit(hooks, {
             type: 'session.created',
             properties: { info: { ...session } },
         });
-        await emit({
+        await emit(hooks, {
             type: 'message.updated',
             properties: { info: { role: 'user', sessionID: session.id } },
         });
+        // the built-in auto-title lands before our rename fires
+        session.title = 'Fixing the thing';
+        await emit(hooks, {
+            type: 'session.updated',
+            properties: { info: { ...session } },
+        });
         await waitFor(() => updates.length > 0);
         const ours = updates[0]?.body.title ?? '';
-        expect(ours).toBe('[browser-extension] fix the thing');
-        // the built-in auto-title lands late, before the first idle
+        expect(ours).toBe('[browser-extension] Fixing the thing');
+        // a late duplicate write of that same auto-title is corrected once
         session.title = 'Fixing the thing';
-        await emit({
+        await emit(hooks, {
             type: 'session.updated',
             properties: { info: { ...session } },
         });
         await waitFor(() => updates.length > 1);
         expect(updates[1]?.body.title).toBe(ours);
-        // a second change is left alone (single correction window)
-        session.title = 'auto-title landed twice?';
-        await emit({
+        // a second correction is never applied (single correction window)
+        session.title = 'Fixing the thing';
+        await emit(hooks, {
             type: 'session.updated',
             properties: { info: { ...session } },
         });
-        await new Promise((r) => {
-            setTimeout(r, 300);
-        });
+        await sleep(300);
         expect(updates).toHaveLength(2);
-        expect(session.title).toBe('auto-title landed twice?');
         // after the first idle the window is closed entirely
-        await emit({ type: 'session.idle', properties: { sessionID: session.id } });
-        session.title = 'manual rename after idle';
-        await emit({
+        await emit(hooks, {
+            type: 'session.idle',
+            properties: { sessionID: session.id },
+        });
+        session.title = 'Fixing the thing';
+        await emit(hooks, {
             type: 'session.updated',
             properties: { info: { ...session } },
         });
-        await new Promise((r) => {
-            setTimeout(r, 300);
-        });
+        await sleep(300);
         expect(updates).toHaveLength(2);
-        expect(session.title).toBe('manual rename after idle');
+        expect(session.title).toBe('Fixing the thing');
+    });
+
+    it('never re-applies over a manual rename made before the first idle', async () => {
+        await writeConfig({});
+        const session = freshSession({ directory: gitProject });
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: 'fix the thing',
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await emit(hooks, {
+            type: 'session.created',
+            properties: { info: { ...session } },
+        });
+        await emit(hooks, {
+            type: 'message.updated',
+            properties: { info: { role: 'user', sessionID: session.id } },
+        });
+        session.title = 'Fixing the thing';
+        await emit(hooks, {
+            type: 'session.updated',
+            properties: { info: { ...session } },
+        });
+        await waitFor(() => updates.length > 0);
+        expect(updates).toHaveLength(1);
+        // a manual rename lands inside the correction window — it wins and
+        // closes the window
+        session.title = 'my manual name';
+        await emit(hooks, {
+            type: 'session.updated',
+            properties: { info: { ...session } },
+        });
+        await sleep(300);
+        expect(updates).toHaveLength(1);
+        expect(session.title).toBe('my manual name');
+        // a late auto-title write after the manual rename is left alone too
+        session.title = 'Fixing the thing';
+        await emit(hooks, {
+            type: 'session.updated',
+            properties: { info: { ...session } },
+        });
+        await sleep(300);
+        expect(updates).toHaveLength(1);
+        expect(session.title).toBe('Fixing the thing');
     });
 });
 
@@ -854,6 +961,24 @@ describe('loadConfig (zod coercion)', () => {
         expect((await loadConfig()).prLinkLlm).toBe(false);
         await writeConfig({ prLinkLlm: true });
         expect((await loadConfig()).prLinkLlm).toBe(true);
+    });
+
+    it('falls back when template or agKeyPattern is an empty string', async () => {
+        await writeConfig({ template: '', agKeyPattern: '' });
+        const cfg = await loadConfig();
+        expect(cfg.template).toBe('[{project}] {agKey} {title}');
+        expect(cfg.agKeyPattern).toBe('[A-Z][A-Z0-9]{1,9}-\\d+');
+    });
+
+    it('coerces the env delay override like the file keys', async () => {
+        const saved = process.env.SESSION_NAMER_DELAY_MS;
+        process.env.SESSION_NAMER_DELAY_MS = '0';
+        try {
+            await writeConfig({});
+            expect((await loadConfig()).renameDelayMs).toBe(10000);
+        } finally {
+            process.env.SESSION_NAMER_DELAY_MS = saved;
+        }
     });
 });
 

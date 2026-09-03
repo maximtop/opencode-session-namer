@@ -1,16 +1,12 @@
 import type { Plugin } from '@opencode-ai/plugin';
 
 /**
-
  * The SDK client opencode hands to the plugin.
-
  */
 export type PluginClient = Parameters<Plugin>[0]['client'];
 
 /**
-
  * Leveled logger bound to the opencode app log.
-
  */
 export type LogFn = (
     level: 'info' | 'warn' | 'error',
@@ -20,15 +16,66 @@ export type LogFn = (
 
 /**
  * Effective plugin configuration (user file merged over the defaults).
- * Inferred from the zod validation schema in `config.ts` so the shape and
- * its coercion rules live in one place.
+ * Declared here — not in config.ts — so pure type imports never pull the
+ * fs/zod/env-carrying config module into the type graph; config.ts keeps
+ * its zod schema output assignable to this shape.
  */
-export type { PluginConfig } from './config';
+export interface PluginConfig {
+    /**
+     * Name shape. Slots: {project}, {agKey}, {title}; empty slots collapse.
+     */
+    template: string;
+    /**
+     * Prepended to {title} for PR sessions; {number} is the PR number.
+     */
+    prPrefix: string;
+    /**
+     * Regex for the issue key; an optional capture group selects the key.
+     */
+    agKeyPattern: string;
+    /**
+     * Titles longer than this get shortened.
+     */
+    maxLength: number;
+    /**
+     * Shorten overlong titles with an LLM instead of a hard word-cut.
+     */
+    smartShorten: boolean;
+    /**
+     * provider/model for shortening; null uses opencode's small_model.
+     */
+    smartShortenModel: string | null;
+    /**
+     * Ask a small model which PR the first message references when no
+     * link-shaped text is found.
+     */
+    prLinkLlm: boolean;
+    /**
+     * Delay after the first user message (or first idle) before renaming.
+     */
+    renameDelayMs: number;
+}
 
 /**
+ * The subset of SDK session fields the event hook reads.
+ */
+export interface SessionInfo {
+    /**
+     * Session id.
+     */
+    id?: string;
+    /**
+     * Current session title.
+     */
+    title?: string;
+    /**
+     * Session working directory.
+     */
+    directory?: string;
+}
 
+/**
  * A GitHub pull request link parsed out of the first user message.
-
  */
 export interface PrLink {
     /**
@@ -50,9 +97,7 @@ export interface PrLink {
 }
 
 /**
-
  * Project label and issue key derived from the session directory.
-
  */
 export interface ProjectInfo {
     /**
@@ -60,15 +105,13 @@ export interface ProjectInfo {
      */
     label: string;
     /**
-     * Issue key from the worktree branch, when detectable.
+     * Issue key from the branch, when detectable.
      */
     agKey: string | null;
 }
 
 /**
-
  * Pull request data fetched via the gh CLI.
-
  */
 export interface PrInfo {
     /**
@@ -82,9 +125,7 @@ export interface PrInfo {
 }
 
 /**
-
  * Rename-once persistence state.
-
  */
 export interface State {
     /**
@@ -99,9 +140,7 @@ export interface State {
 }
 
 /**
-
  * Per-session in-memory tracking used to recognize the auto-title.
-
  */
 export interface TrackedSession {
     /**
@@ -125,12 +164,15 @@ export interface TrackedSession {
      * Last title seen in session.updated events.
      */
     lastTitle: string | undefined;
+    /**
+     * Rename attempts that found no user text; past a cap the session is
+     * given up so all-synthetic sessions are not refetched on every idle.
+     */
+    renameAttempts: number;
 }
 
 /**
-
  * Extracts an issue key (e.g. AG-123) from free text.
-
  */
 export type AgKeyExtractor = (
     text: string | null | undefined,

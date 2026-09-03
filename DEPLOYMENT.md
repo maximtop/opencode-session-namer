@@ -4,9 +4,13 @@
 
 ```sh
 git clone https://github.com/maximtop/opencode-session-namer
-ln -s "$PWD/opencode-session-namer/src/index.ts" \
-  ~/.config/opencode/plugins/session-namer.ts
+cd opencode-session-namer
+pnpm install
+ln -s "$PWD/src/index.ts" ~/.config/opencode/plugins/session-namer.ts
 ```
+
+`pnpm install` is required: the plugin imports `zod` at runtime, resolved
+from the checkout's `node_modules` through the symlink.
 
 Restart opencode / OpenChamber to load the plugin. Edits in the checkout take
 effect on the next restart.

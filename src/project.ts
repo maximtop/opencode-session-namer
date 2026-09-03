@@ -26,7 +26,8 @@ async function branchAgKey(
 /**
  * Resolves the project label from the session directory.
  *
- * - Regular checkout: the directory basename.
+ * - Regular checkout: the directory basename; the key comes from the branch
+ * recorded in `.git/HEAD`, when it has one.
  * - Linked worktree: `.git` is a file pointing into the main repo, so the
  * label is the main repo name and the key comes from the branch.
  * - Scratch dirs (chats, tmp, non-git) → null, session keeps the auto-title.
@@ -56,7 +57,10 @@ export async function projectForDirectory(
         return null;
     }
     if (stat.isDirectory()) {
-        return { label: humanize(basename(dir)), agKey: null };
+        // regular checkout: the branch (and its issue key) lives in
+        // .git/HEAD
+        const agKey = await branchAgKey(gitPath, extractAgKey);
+        return { label: humanize(basename(dir)), agKey };
     }
     if (!stat.isFile()) {
         return null;
