@@ -67,9 +67,14 @@ export const SessionNamer: Plugin = async ({ client }) => {
         return rec;
     };
 
-    const markProcessed = async (id: string): Promise<void> => {
+    const markProcessed = async (
+        id: string,
+        appliedTitle?: string,
+    ): Promise<void> => {
         state.processed[id] = Date.now();
-        tracked.delete(id);
+        if (appliedTitle) {
+            state.appliedTitles[id] = appliedTitle;
+        }
         await saveState(state);
     };
 
@@ -91,11 +96,42 @@ export const SessionNamer: Plugin = async ({ client }) => {
         releaseScheduled,
     });
 
+    /**
+     * Arms the delayed rename for a session. The rename itself is retry-safe
+     * (it releases the latch on transient outcomes).
+     * @param sessionID session to rename
+     */
+    const schedule = (sessionID: string): void => {
+        if (state.processed[sessionID]) {
+            return;
+        }
+        const rec = recordFor(sessionID);
+        if (rec.foreign || rec.scheduled) {
+            return;
+        }
+        rec.scheduled = true;
+        setTimeout(async () => {
+            try {
+                await rename(sessionID);
+            } catch (e) {
+                log('error', 'rename failed, will retry on next idle', {
+                    sessionID,
+                    error: String(e),
+                });
+                releaseScheduled(sessionID);
+            }
+        }, config.renameDelayMs);
+    };
+
     return {
         /**
-         * Tracks sessions and schedules the rename. `session.updated`
-         * events tell the built-in auto-title apart from manual renames;
-         * `session.idle` arms the delayed rename.
+         * Tracks sessions and schedules the rename. `message.updated` is the
+         * fast path (rename right after the first user message — long first
+         * turns would otherwise delay the rename until the first idle).
+         * `session.updated` tells the built-in auto-title apart from manual
+         * renames and corrects a late auto-title write over our title once,
+         * before the first idle. `session.idle` is the fallback path for
+         * sessions restored before the plugin saw their first message.
          * @param input opencode event envelope
          * @param input.event the event payload
          */
@@ -110,7 +146,25 @@ export const SessionNamer: Plugin = async ({ client }) => {
                 }
                 if (event.type === 'session.updated') {
                     const info = event.properties?.info;
-                    if (!info?.id || state.processed[info.id]) {
+                    if (!info?.id) {
+                        return;
+                    }
+                    const applied = state.appliedTitles[info.id];
+                    if (state.processed[info.id]) {
+                        // a late auto-title write overwrote our title before
+                        // the first idle — re-apply ours exactly once
+                        if (applied && info.title !== applied) {
+                            delete state.appliedTitles[info.id];
+                            await saveState(state);
+                            await client.session.update({
+                                path: { id: info.id },
+                                body: { title: applied },
+                            });
+                            log('info', 'restored title over late auto-title', {
+                                sessionID: info.id,
+                                title: applied,
+                            });
+                        }
                         return;
                     }
                     const rec = recordFor(info.id);
@@ -123,35 +177,33 @@ export const SessionNamer: Plugin = async ({ client }) => {
                 if (event.type === 'message.updated') {
                     const info = event.properties?.info;
                     if (info?.role === 'user' && info.sessionID) {
-                        recordFor(info.sessionID).sawUserMessage = true;
+                        const rec = recordFor(info.sessionID);
+                        const first = !rec.sawUserMessage;
+                        rec.sawUserMessage = true;
+                        if (first) {
+                            schedule(info.sessionID);
+                        }
                     }
                     return;
                 }
                 if (event.type === 'session.idle') {
                     const sessionID = event.properties?.sessionID;
-                    if (!sessionID || state.processed[sessionID]) {
+                    if (!sessionID) {
+                        return;
+                    }
+                    if (state.processed[sessionID]) {
+                        // the re-apply window ends at the first idle after
+                        // the rename — drop the tracked record then
+                        tracked.delete(sessionID);
+                        delete state.appliedTitles[sessionID];
+                        await saveState(state);
                         return;
                     }
                     const rec = recordFor(sessionID);
                     if (rec.foreign) {
                         return;
                     }
-                    if (rec.scheduled) {
-                        return;
-                    }
-                    rec.scheduled = true;
-                    setTimeout(async () => {
-                        try {
-                            await rename(sessionID);
-                        } catch (e) {
-                            log(
-                                'error',
-                                'rename failed, will retry on next idle',
-                                { sessionID, error: String(e) },
-                            );
-                            releaseScheduled(sessionID);
-                        }
-                    }, config.renameDelayMs);
+                    schedule(sessionID);
                 }
             } catch (e) {
                 log('error', 'event handler failed', {

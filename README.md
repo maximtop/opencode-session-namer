@@ -21,7 +21,7 @@ An [opencode](https://opencode.ai) plugin that gives sessions meaningful names, 
 
 - **Renames exactly once per session** (tracked in a state file, survives restarts). Later manual renames are never overridden.
 - **A manual/external title is never replaced.** The plugin tracks title-change events: the first title set right after the first user message is assumed to be opencode's auto-title and may be replaced; any other title marks the session as foreign.
-- The rename fires ~10s after the first `session.idle`, so it lands after the built-in auto-title (in opencode, the last write wins).
+- The rename fires ~10s after the first user message (falling back to the first `session.idle` for sessions restored before the plugin saw them). If the built-in auto-title lands after our rename but before the first idle, our title is re-applied exactly once — after the first idle, later changes (including manual renames) are never touched.
 - No LLM calls by default; naming is deterministic. Failures never break the session — the plugin just logs and moves on.
 
 ## Install
@@ -57,7 +57,7 @@ All optional; create `~/.config/opencode/session-namer.json` to override:
 | `maxLength` | `90` | Titles longer than this get shortened. |
 | `smartShorten` | `false` | Shorten overlong titles with an LLM instead of a hard word-cut. |
 | `smartShortenModel` | `null` | `provider/model` for shortening; defaults to `small_model` from the opencode config. |
-| `renameDelayMs` | `10000` | Delay after the first idle before renaming. |
+| `renameDelayMs` | `10000` | Delay after the first user message (or first idle) before renaming. |
 
 ### Environment overrides
 

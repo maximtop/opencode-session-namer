@@ -695,3 +695,87 @@ describe('first-message semantics', () => {
         expect(updates[0]?.body.title).toContain('pull/1226');
     }, 30000);
 });
+
+describe('fast message-triggered rename', () => {
+    it('renames on the first user message without waiting for idle', async () => {
+        await writeConfig({});
+        const session = freshSession({ directory: gitProject });
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: 'fix the thing',
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await hooks.event?.({
+            event: { type: 'session.created', properties: { info: { ...session } } },
+        } as never);
+        await hooks.event?.({
+            event: {
+                type: 'message.updated',
+                properties: { info: { role: 'user', sessionID: session.id } },
+            },
+        } as never);
+        // no idle event at all
+        await waitFor(() => updates.length > 0);
+        expect(updates[0]?.body.title).toBe(
+            '[browser-extension] Fixing the flaky test'.includes('fix')
+                ? updates[0]?.body.title
+                : updates[0]?.body.title,
+        );
+        expect(updates[0]?.body.title).toBe('[browser-extension] fix the thing');
+    });
+
+    it('re-applies our title once when the auto-title lands after the rename', async () => {
+        await writeConfig({});
+        const session = freshSession({ directory: gitProject });
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: 'fix the thing',
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        const emit = async (event: unknown) => {
+            await hooks.event?.({ event: event as never });
+        };
+        await emit({
+            type: 'session.created',
+            properties: { info: { ...session } },
+        });
+        await emit({
+            type: 'message.updated',
+            properties: { info: { role: 'user', sessionID: session.id } },
+        });
+        await waitFor(() => updates.length > 0);
+        const ours = updates[0]?.body.title ?? '';
+        expect(ours).toBe('[browser-extension] fix the thing');
+        // the built-in auto-title lands late, before the first idle
+        session.title = 'Fixing the thing';
+        await emit({
+            type: 'session.updated',
+            properties: { info: { ...session } },
+        });
+        await waitFor(() => updates.length > 1);
+        expect(updates[1]?.body.title).toBe(ours);
+        // a second change is left alone (single correction window)
+        session.title = 'auto-title landed twice?';
+        await emit({
+            type: 'session.updated',
+            properties: { info: { ...session } },
+        });
+        await new Promise((r) => {
+            setTimeout(r, 300);
+        });
+        expect(updates).toHaveLength(2);
+        expect(session.title).toBe('auto-title landed twice?');
+        // after the first idle the window is closed entirely
+        await emit({ type: 'session.idle', properties: { sessionID: session.id } });
+        session.title = 'manual rename after idle';
+        await emit({
+            type: 'session.updated',
+            properties: { info: { ...session } },
+        });
+        await new Promise((r) => {
+            setTimeout(r, 300);
+        });
+        expect(updates).toHaveLength(2);
+        expect(session.title).toBe('manual rename after idle');
+    });
+});

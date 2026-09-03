@@ -27,9 +27,13 @@ function prune(processed: unknown): Record<string, number> {
 export async function loadState(): Promise<State> {
     try {
         const parsed = JSON.parse(await fsp.readFile(STATE_FILE, 'utf8'));
-        return { processed: prune(parsed.processed) };
+        return {
+            processed: prune(parsed.processed),
+            appliedTitles: (parsed.appliedTitles
+                ?? {}) as Record<string, string>,
+        };
     } catch {
-        return { processed: {} };
+        return { processed: {}, appliedTitles: {} };
     }
 }
 

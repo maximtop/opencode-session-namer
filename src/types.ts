@@ -120,6 +120,11 @@ export interface State {
      * Session id → timestamp of when it was processed.
      */
     processed: Record<string, number>;
+    /**
+     * Session id → the title this plugin applied, kept until the session
+     * first goes idle so a late auto-title write can be corrected once.
+     */
+    appliedTitles: Record<string, string>;
 }
 
 /**

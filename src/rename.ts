@@ -52,9 +52,11 @@ interface RenamerDeps {
      */
     tracked: Map<string, TrackedSession>;
     /**
-     * Marks a session as processed and persists the state file.
+     * Marks a session as processed and persists the state file; the applied
+     * title is kept until the session first goes idle so a late auto-title
+     * write can be corrected once.
      */
-    markProcessed: (id: string) => Promise<void>;
+    markProcessed: (id: string, appliedTitle?: string) => Promise<void>;
     /**
      * Releases the scheduled latch so a later idle can retry.
      */
@@ -292,6 +294,8 @@ export function createRenamer(deps: RenamerDeps) {
                 body: { title: safe },
             });
             log('info', 'renamed session', { sessionID, title: safe });
+            await markProcessed(sessionID, safe);
+            return true;
         }
         await markProcessed(sessionID);
         return true;
