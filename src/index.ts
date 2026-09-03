@@ -56,7 +56,7 @@ export const SessionNamer: Plugin = async ({ client }) => {
         }
     };
 
-    const state = await loadState();
+    const state = await loadState(log);
     const tracked = new Map<string, TrackedSession>();
 
     const recordFor = (sessionID: string): TrackedSession => {
@@ -69,6 +69,9 @@ export const SessionNamer: Plugin = async ({ client }) => {
                 scheduled: false,
                 lastTitle: undefined,
                 renameAttempts: 0,
+                child: false,
+                givenUp: false,
+                directory: undefined,
             };
             tracked.set(sessionID, rec);
         }
@@ -99,6 +102,9 @@ export const SessionNamer: Plugin = async ({ client }) => {
      * @param sessionID session whose applied title is dropped
      */
     const forgetAppliedTitle = async (sessionID: string): Promise<void> => {
+        if (!(sessionID in state.appliedTitles)) {
+            return;
+        }
         delete state.appliedTitles[sessionID];
         await saveState(state, log);
     };
@@ -124,7 +130,16 @@ export const SessionNamer: Plugin = async ({ client }) => {
             return;
         }
         const rec = recordFor(sessionID);
-        if (rec.foreign || rec.scheduled) {
+        if (rec.child || rec.givenUp) {
+            return;
+        }
+        if (rec.foreign) {
+            log('info', 'skipping session with a foreign title', {
+                sessionID,
+            });
+            return;
+        }
+        if (rec.scheduled) {
             return;
         }
         rec.scheduled = true;
@@ -198,6 +213,9 @@ export const SessionNamer: Plugin = async ({ client }) => {
             return;
         }
         const rec = recordFor(info.id);
+        if (info.directory) {
+            rec.directory = info.directory;
+        }
         const patch = classifyTitleChange(rec, info.title ?? '');
         rec.foreign = patch.foreign;
         rec.autoTitle = patch.autoTitle;
@@ -218,8 +236,17 @@ export const SessionNamer: Plugin = async ({ client }) => {
             return;
         }
         const rec = recordFor(sessionID);
+        if (rec.child) {
+            // throwaway child sessions are deleted by their owner — drop
+            // tracking instead of persisting a processed entry
+            tracked.delete(sessionID);
+            return;
+        }
         if (rec.foreign) {
             // foreign sessions are never renamed — stop tracking them
+            log('info', 'skipping session with a foreign title', {
+                sessionID,
+            });
             await markProcessed(sessionID);
             tracked.delete(sessionID);
             return;
@@ -245,7 +272,10 @@ export const SessionNamer: Plugin = async ({ client }) => {
                 if (event.type === 'session.created') {
                     const info = event.properties?.info;
                     if (info?.id) {
-                        recordFor(info.id).lastTitle = info.title;
+                        const rec = recordFor(info.id);
+                        rec.lastTitle = info.title;
+                        rec.directory = info.directory;
+                        rec.child = Boolean(info.parentID);
                     }
                     return;
                 }
@@ -264,8 +294,19 @@ export const SessionNamer: Plugin = async ({ client }) => {
                     const info = event.properties?.info;
                     if (info?.role === 'user' && info.sessionID) {
                         const rec = recordFor(info.sessionID);
+                        if (rec.child) {
+                            return;
+                        }
                         const first = !rec.sawUserMessage;
                         rec.sawUserMessage = true;
+                        // a freshly arrived user message is new evidence:
+                        // retry a given-up session, reset its attempt budget
+                        // and re-arm the latch a prior give-up left set
+                        if (rec.givenUp) {
+                            rec.givenUp = false;
+                            rec.renameAttempts = 0;
+                            rec.scheduled = false;
+                        }
                         if (first) {
                             schedule(info.sessionID);
                         }
@@ -279,7 +320,20 @@ export const SessionNamer: Plugin = async ({ client }) => {
                     }
                 }
             } catch (e) {
+                const props = event.properties as Record<string, unknown>;
+                const info = (typeof props?.info === 'object' && props.info !== null)
+                    ? props.info as Record<string, unknown>
+                    : undefined;
+                let sessionID: string | undefined;
+                if (typeof info?.id === 'string') {
+                    sessionID = info.id;
+                } else if (typeof info?.sessionID === 'string') {
+                    sessionID = info.sessionID;
+                } else if (typeof props?.sessionID === 'string') {
+                    sessionID = props.sessionID;
+                }
                 log('error', 'event handler failed', {
+                    sessionID,
                     error: String(e),
                     event: event.type,
                 });

@@ -72,6 +72,10 @@ export interface SessionInfo {
      * Session working directory.
      */
     directory?: string;
+    /**
+     * Parent session id — present on child (subagent) sessions.
+     */
+    parentID?: string;
 }
 
 /**
@@ -119,7 +123,7 @@ export interface PrInfo {
      */
     title: string | null;
     /**
-     * Head branch name (displayId).
+     * Head branch name, from gh's headRefName field.
      */
     branch: string | null;
 }
@@ -165,10 +169,25 @@ export interface TrackedSession {
      */
     lastTitle: string | undefined;
     /**
-     * Rename attempts that found no user text; past a cap the session is
-     * given up so all-synthetic sessions are not refetched on every idle.
+     * Rename attempts that found no user text or failed the title write;
+     * past a cap the session is given up so it is not refetched on every
+     * idle. A new user message clears it.
      */
     renameAttempts: number;
+    /**
+     * True when the session is a throwaway child session (smashShorten,
+     * pr-link extraction) — never scheduled, never persisted.
+     */
+    child: boolean;
+    /**
+     * True when retries are exhausted; a new user message re-arms the rename.
+     */
+    givenUp: boolean;
+    /**
+     * Session working directory captured from events — needed to scope
+     * session.get on multi-directory servers.
+     */
+    directory: string | undefined;
 }
 
 /**

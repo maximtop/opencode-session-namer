@@ -3,9 +3,17 @@ import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import type { LogFn, State } from './types';
 
-const STATE_FILE = process.env.SESSION_NAMER_STATE
-    ?? join(homedir(), '.config', 'opencode', 'session-namer.state.json');
 const STATE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * The state file path, resolved at call time — the module must not capture
+ * env at import (tests and other servers set SESSION_NAMER_STATE per run).
+ * @returns state file path
+ */
+function stateFile(): string {
+    return process.env.SESSION_NAMER_STATE
+        ?? join(homedir(), '.config', 'opencode', 'session-namer.state.json');
+}
 
 /**
  * Drops entries older than the TTL.
@@ -40,23 +48,39 @@ function pruneAppliedTitles(
 }
 
 /**
- * Loads the processed-session ids, dropping entries older than the TTL.
+ * Monotonic counter for tmp names — concurrent saveState writers (several
+ * opencode servers, or overlapping rename/idle handlers in one process)
+ * must never share one tmp path.
+ */
+let tmpSeq = 0;
+
+/**
+ * Loads the processed-session ids, dropping entries older than the TTL. A
+ * missing file is a normal first run (silent); an unreadable or corrupt
+ * file is real data loss and is logged.
+ * @param log optional leveled logger for load failures
  * @returns rename-once state
  */
-export async function loadState(): Promise<State> {
+export async function loadState(log?: LogFn): Promise<State> {
+    let parsed: unknown;
     try {
-        const parsed = JSON.parse(await fsp.readFile(STATE_FILE, 'utf8'));
-        const processed = prune(parsed.processed);
-        return {
-            processed,
-            appliedTitles: pruneAppliedTitles(
-                parsed.appliedTitles,
-                processed,
-            ),
-        };
-    } catch {
+        parsed = JSON.parse(await fsp.readFile(stateFile(), 'utf8'));
+    } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+            log?.('warn', 'session-namer state unreadable, starting fresh', {
+                error: String(e),
+            });
+        }
         return { processed: {}, appliedTitles: {} };
     }
+    const processed = prune((parsed as Record<string, unknown>)?.processed);
+    return {
+        processed,
+        appliedTitles: pruneAppliedTitles(
+            (parsed as Record<string, unknown>)?.appliedTitles,
+            processed,
+        ),
+    };
 }
 
 /**
@@ -73,11 +97,12 @@ export async function saveState(state: State, log?: LogFn): Promise<void> {
         processed,
         appliedTitles: pruneAppliedTitles(state.appliedTitles, processed),
     };
-    const tmp = `${STATE_FILE}.tmp`;
+    tmpSeq += 1;
+    const tmp = `${stateFile()}.${process.pid}.${tmpSeq}.tmp`;
     try {
-        await fsp.mkdir(dirname(STATE_FILE), { recursive: true });
+        await fsp.mkdir(dirname(stateFile()), { recursive: true });
         await fsp.writeFile(tmp, JSON.stringify(next));
-        await fsp.rename(tmp, STATE_FILE);
+        await fsp.rename(tmp, stateFile());
     } catch (e) {
         log?.('warn', 'failed to persist session-namer state', {
             error: String(e),

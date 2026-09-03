@@ -8,8 +8,13 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect, beforeAll } from 'vitest';
 import type { Plugin } from '@opencode-ai/plugin';
-import type { PluginClient, PluginConfig } from '../src/types';
+import type {
+    PluginClient,
+    PluginConfig,
+    TrackedSession,
+} from '../src/types';
 import { findPrUrl } from '../src/pr-link';
+import type { ChangePatch } from '../src/tracking';
 
 const tmp = await fsp.mkdtemp(join(tmpdir(), 'session-namer-test-'));
 process.env.SESSION_NAMER_DELAY_MS = '30';
@@ -142,6 +147,13 @@ function makeClient(options: MockOptions) {
     const childCalls = {
         created: 0, prompted: 0, deleted: 0, lastPrompt: null as string | null,
     };
+    // Captured query of every session call, for directory assertions.
+    const queries: Array<{ method: string; directory?: string }> = [];
+    const expectDirectory = (method: string, opts: {
+        query?: { directory?: string };
+    }): void => {
+        queries.push({ method, directory: opts.query?.directory });
+    };
     const client = {
         app: { log: async () => ({}) },
         config: {
@@ -150,9 +162,15 @@ function makeClient(options: MockOptions) {
             }),
         },
         session: {
-            get: async () => ({ data: session }),
-            messages: async ({ path }: { path: { id: string } }) => {
-                if (path.id.startsWith('child_')) {
+            get: async (opts: { query?: { directory?: string } }) => {
+                expectDirectory('get', opts);
+                return { data: session };
+            },
+            messages: async (
+                opts: { path: { id: string }; query?: { directory?: string } },
+            ) => {
+                expectDirectory('messages', opts);
+                if (opts.path.id.startsWith('child_')) {
                     return {
                         data: [{
                             info: { role: 'assistant', time: { created: 2 } },
@@ -184,7 +202,8 @@ function makeClient(options: MockOptions) {
                 }
                 return { data: session };
             },
-            create: async () => {
+            create: async (opts: { query?: { directory?: string } }) => {
+                expectDirectory('create', opts);
                 if (failCreate) {
                     throw new Error('boom');
                 }
@@ -198,13 +217,19 @@ function makeClient(options: MockOptions) {
                 childCalls.lastPrompt = opts.body.parts[0]?.text ?? null;
                 return { data: {} };
             },
-            delete: async () => {
+            delete: async (opts: { query?: { directory?: string } }) => {
+                expectDirectory('delete', opts);
                 childCalls.deleted += 1;
                 return { data: true };
             },
         },
     };
-    return { client: client as unknown as PluginClient, updates, childCalls };
+    return {
+        client: client as unknown as PluginClient,
+        updates,
+        childCalls,
+        queries,
+    };
 }
 
 /**
@@ -594,27 +619,26 @@ describe('session-namer', () => {
 });
 
 describe('classifyTitleChange (title provenance)', () => {
-    const freshRec = (): import('../src/types').TrackedSession => ({
+    const freshRec = (): TrackedSession => ({
         sawUserMessage: false,
         autoTitle: undefined,
         foreign: false,
         scheduled: false,
         lastTitle: undefined,
         renameAttempts: 0,
+        child: false,
+        givenUp: false,
+        directory: undefined,
     });
 
-    const applyTo = (rec: ReturnType<typeof freshRec>, patch: {
-        autoTitle: string | undefined;
-        foreign: boolean;
-        lastTitle: string;
-    }) => {
+    const applyTo = (rec: TrackedSession, patch: ChangePatch) => {
         rec.lastTitle = patch.lastTitle;
         rec.autoTitle = patch.autoTitle;
         rec.foreign = patch.foreign;
     };
 
     const classify = async (
-        rec: ReturnType<typeof freshRec>,
+        rec: TrackedSession,
         title: string,
     ) => {
         const { classifyTitleChange } = await import('../src/tracking');
@@ -714,6 +738,40 @@ describe('idle before the first user message', () => {
         await waitFor(() => updates.length > 0);
         expect(updates[0]?.body.title).toBe('[browser-extension] Fixing the flaky test');
     });
+
+    it('re-arms a session given up after MAX attempts once a real message arrives', async () => {
+        await writeConfig({});
+        let sent = false;
+        const session = freshSession({ directory: gitProject });
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: 'fix the broken test',
+            suppressUserTextUntil: () => sent,
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await emit(hooks, {
+            type: 'session.created',
+            properties: { info: { ...session } },
+        });
+        // idle before the first message, repeatedly — exhausts the budget
+        for (let i = 0; i < 12; i += 1) {
+            await emit(hooks, {
+                type: 'session.idle',
+                properties: { sessionID: session.id },
+            });
+            await sleep(80);
+        }
+        expect(updates).toHaveLength(0);
+        expect(session.title).toBe('New session - 2026-09-03T10:00:00.000Z');
+        // the real first message arrives after the give-up: must re-arm
+        sent = true;
+        await emit(hooks, {
+            type: 'message.updated',
+            properties: { info: { role: 'user', sessionID: session.id } },
+        });
+        await waitFor(() => updates.length > 0);
+        expect(updates[0]?.body.title).toBe('[browser-extension] fix the broken test');
+    });
 });
 
 describe('first-message semantics', () => {
@@ -770,7 +828,7 @@ describe('fast message-triggered rename', () => {
     it('renames on the first user message without waiting for idle', async () => {
         await writeConfig({});
         const session = freshSession({ directory: gitProject });
-        const { client, updates } = makeClient({
+        const { client, updates, queries } = makeClient({
             session,
             firstUserText: 'fix the thing',
         });
@@ -786,6 +844,13 @@ describe('fast message-triggered rename', () => {
         // no idle event at all
         await waitFor(() => updates.length > 0);
         expect(updates[0]?.body.title).toBe('[browser-extension] fix the thing');
+        // session.get must be scoped to the session's directory — the same
+        // invariant the re-apply write fix enforced (every SDK call carries
+        // query.directory on multi-directory servers)
+        const get = queries.find((q) => q.method === 'get');
+        expect(get?.directory).toBe(gitProject);
+        const messages = queries.find((q) => q.method === 'messages');
+        expect(messages?.directory).toBe(gitProject);
     });
 
     it('re-applies our title over a late duplicate of the recorded auto-title', async () => {
@@ -926,7 +991,6 @@ describe('loadConfig (zod coercion)', () => {
     it('rejects booleans, floats, zero and negatives for numeric fields', async () => {
         for (const bad of [true, 3.5, 0, -10, null]) {
             await writeConfig({ maxLength: bad });
-            // eslint-disable-next-line no-await-in-loop
             expect((await loadConfig()).maxLength).toBe(90);
         }
     });

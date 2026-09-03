@@ -38,6 +38,10 @@ export async function fetchGhPrInfo(
     try {
         const { stdout } = await execFileAsync('gh', args, {
             timeout: GH_TIMEOUT_MS,
+            // gh resolves its API host from GH_HOST — pin it so the request
+            // destination matches the github.com-only guard above instead of
+            // the machine's GHES config.
+            env: { ...process.env, GH_HOST: 'github.com' },
         });
         // external boundary: validate the shape instead of trusting it
         const parsed: unknown = JSON.parse(stdout);

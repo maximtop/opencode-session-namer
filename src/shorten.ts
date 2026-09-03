@@ -1,6 +1,6 @@
 import { messageText } from './messages';
 import { truncateAtWord } from './text';
-import type { PluginClient, PluginConfig } from './types';
+import type { LogFn, PluginClient, PluginConfig } from './types';
 
 /**
  * Tool lockdown for throwaway child sessions: the prompted text comes from
@@ -41,15 +41,19 @@ export type ModelRef = {
  * opencode's small_model.
  * @param client opencode SDK client
  * @param config plugin config
+ * @param directory session directory (scopes config.get on multi-dir servers)
  * @returns model reference or undefined (server default then applies)
  */
 export async function resolveModel(
     client: PluginClient,
     config: PluginConfig,
+    directory: string | undefined,
 ): Promise<ModelRef | undefined> {
     let ref = config.smartShortenModel;
     if (!ref) {
-        const cfg = await client.config.get();
+        const cfg = await client.config.get({
+            query: { directory },
+        });
         const small = cfg.data?.small_model;
         ref = typeof small === 'string' ? small : null;
     }
@@ -78,11 +82,13 @@ function capAtBudget(reply: string, budget: number): string {
  * Creates the smartShorten function bound to the SDK client.
  * @param client opencode SDK client
  * @param config plugin config
+ * @param log leveled logger
  * @returns smartShorten implementation
  */
 export function createSmartShorten(
     client: PluginClient,
     config: PluginConfig,
+    log: LogFn,
 ) {
     /**
      * LLM-shortens an overlong descriptive part via a throwaway child
@@ -101,7 +107,7 @@ export function createSmartShorten(
         parentSessionID: string,
         directory: string,
     ): Promise<string> {
-        const model = await resolveModel(client, config);
+        const model = await resolveModel(client, config, directory);
         const child = await client.session.create({
             body: { parentID: parentSessionID, title: 'session-namer: shorten' },
             query: { directory },
@@ -149,7 +155,12 @@ export function createSmartShorten(
         } finally {
             await client.session
                 .delete({ path: { id: childID }, query: { directory } })
-                .catch(() => {});
+                .catch((e) => {
+                    log('warn', 'failed to delete shorten child session', {
+                        sessionID: childID,
+                        error: String(e),
+                    });
+                });
         }
     };
 }

@@ -42,10 +42,13 @@ export async function projectForDirectory(
     if (!dir) {
         return null;
     }
-    const isScratch = dir.includes('/.config/openchamber/chats/')
-        || dir.startsWith(tmpdir())
-        || dir.startsWith('/tmp/')
-        || dir.startsWith('/var/folders/');
+    const normalized = dir.replace(/\\/g, '/');
+    const tmp = `${tmpdir().replace(/\\/g, '/').replace(/\/+$/, '')}/`;
+    const isScratch = normalized.includes('/.config/openchamber/chats/')
+        || normalized.startsWith('/.config/openchamber/chats/')
+        || normalized.startsWith(tmp)
+        || normalized.startsWith('/tmp/')
+        || normalized.startsWith('/var/folders/');
     if (isScratch) {
         return null;
     }

@@ -4,8 +4,19 @@ import { homedir } from 'node:os';
 import { z } from 'zod';
 import type { PluginConfig } from './types';
 
-const CONFIG_FILE = process.env.SESSION_NAMER_CONFIG
-    ?? join(homedir(), '.config', 'opencode', 'session-namer.json');
+/**
+ * The default config path, resolved at call time so tests (and any consumer
+ * that sets the env var after import) get the expected file.
+ * @returns config file path
+ */
+function defaultConfigPath(): string {
+    return join(
+        homedir(),
+        '.config',
+        'opencode',
+        'session-namer.json',
+    );
+}
 
 const DEFAULTS: PluginConfig = {
     template: '[{project}] {agKey} {title}',
@@ -50,41 +61,30 @@ const ConfigSchema = z.object({
 // loadConfig assigns the schema output to a PluginConfig-typed variable, so
 // the schema shape drifting from the type in types.ts fails type-check.
 
-const delayMsOverride = positiveInt(DEFAULTS.renameDelayMs);
-
-/**
- * Applies the SESSION_NAMER_DELAY_MS env override through the same
- * positive-int coercion as the file keys (garbage, zero and negatives fall
- * back to the default). Test hook.
- * @param config config loaded from the user file and defaults
- * @returns config with the env override applied
- */
-function applyEnvOverride(config: PluginConfig): PluginConfig {
-    const raw = process.env.SESSION_NAMER_DELAY_MS;
-    if (raw === undefined || raw === '') {
-        return config;
-    }
-    return { ...config, renameDelayMs: delayMsOverride.parse(raw) };
-}
-
 /**
  * Loads the user config merged over the defaults. A missing or broken file
  * means defaults; per-key type mismatches fall back to that key's default.
+ * The SESSION_NAMER_DELAY_MS override is folded into the raw object before
+ * parsing, so it goes through the same positive-int validation as the file
+ * keys (zero, negatives and garbage fall back to the default).
+ * @param file config path; defaults to the env override or the user config
  * @returns effective plugin config
  */
-export async function loadConfig(): Promise<PluginConfig> {
-    let raw: unknown;
+export async function loadConfig(
+    file = process.env.SESSION_NAMER_CONFIG ?? defaultConfigPath(),
+): Promise<PluginConfig> {
+    let raw: Record<string, unknown> = {};
     try {
-        raw = JSON.parse(await fsp.readFile(CONFIG_FILE, 'utf8'));
+        const parsed: unknown = JSON.parse(await fsp.readFile(file, 'utf8'));
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            raw = { ...(parsed as Record<string, unknown>) };
+        }
     } catch {
         raw = {};
     }
-    let parsed: PluginConfig;
-    try {
-        parsed = ConfigSchema.parse(raw);
-    } catch {
-        // the top level is not a plain object (array/scalar) — all defaults
-        parsed = ConfigSchema.parse({});
+    const envRaw = process.env.SESSION_NAMER_DELAY_MS;
+    if (envRaw !== undefined && envRaw !== '') {
+        raw.renameDelayMs = envRaw;
     }
-    return applyEnvOverride(parsed);
+    return ConfigSchema.parse(raw);
 }
