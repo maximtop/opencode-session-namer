@@ -12,7 +12,7 @@ import type {
     PluginClient,
     TrackedSession,
 } from '../src/types';
-import { findPrUrl } from '../src/pr-link';
+import { findPrUrl, findPrCandidates } from '../src/pr-link';
 import { loadConfig } from '../src/config';
 import { SessionNamer } from '../src/index';
 import type { ChangePatch } from '../src/tracking';
@@ -375,6 +375,35 @@ describe('session-namer', () => {
         const title = updates[0]?.body.title ?? '';
         expect(title.startsWith('[filters registry] Review pull/1226 ')).toBe(true);
         expect(title.length).toBeLessThanOrEqual(90);
+    }, 30000);
+
+    it('skips a file reference and names from a later short-form PR', async () => {
+        await writeConfig({});
+        const session = freshSession({ directory: gitProject });
+        const { client, updates } = makeClient({
+            session,
+            firstUserText:
+                'fix src/rename.ts#42, see AdguardTeam/FiltersRegistry#1226',
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await drive(hooks, session, { autoTitle: 'Review changeset', updates });
+        expect(updates).toHaveLength(1);
+        const title = updates[0]?.body.title ?? '';
+        expect(title.startsWith('[filters registry] Review pull/1226 '))
+            .toBe(true);
+    }, 30000);
+
+    it('names by project when the only short form is a file reference', async () => {
+        await writeConfig({});
+        const session = freshSession({ directory: gitProject });
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: 'fix src/rename.ts#42',
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await drive(hooks, session, { autoTitle: 'Fix rename', updates });
+        expect(updates).toHaveLength(1);
+        expect(updates[0]?.body.title).toBe('[browser-extension] Fix rename');
     }, 30000);
 
     it('ignores example links in review templates', async () => {
@@ -1086,6 +1115,36 @@ describe('findPrUrl (PR-link extraction)', () => {
     it('returns null for no PR and for non-numeric placeholders', () => {
         expect(findPrUrl('just refactor the code')).toBeNull();
         expect(findPrUrl('placeholder OWNER/REPO#ID')).toBeNull();
+    });
+
+    it('lists candidates full-URLs-first and dedupes bare URLs', () => {
+        const full = 'https://github.com/o/r/pull/7';
+        const text = `fix src/rename.ts#42, see ${full} and a/b#3`;
+        expect(findPrCandidates(text)).toEqual([
+            {
+                host: 'https://github.com', owner: 'o', repo: 'r', number: '7',
+            },
+            {
+                host: 'https://github.com',
+                owner: 'src',
+                repo: 'rename.ts',
+                number: '42',
+                shortForm: true,
+            },
+            {
+                host: 'https://github.com',
+                owner: 'a',
+                repo: 'b',
+                number: '3',
+                shortForm: true,
+            },
+        ]);
+        // the bare URL matches both scan passes but is listed once
+        expect(findPrCandidates(full)).toEqual([
+            {
+                host: 'https://github.com', owner: 'o', repo: 'r', number: '7',
+            },
+        ]);
     });
 });
 

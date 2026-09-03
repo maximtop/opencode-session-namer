@@ -36,6 +36,38 @@ function parsePrUrlShape(raw: string): PrLink | null {
 }
 
 /**
+ * Finds every PR-shaped candidate in the message, best first: full URLs
+ * (they carry the host and may sit inside a markdown `[label](url)`), then
+ * short `owner/repo#N` forms; duplicates (a bare URL matched by both
+ * passes) are removed. Callers walk the list in order so an unverifiable
+ * short form — a file reference like `src/rename.ts#42` — never shadows a
+ * real PR link later in the message.
+ * @param text first user message text
+ * @returns parsed PR links in preference order
+ */
+export function findPrCandidates(text: string): PrLink[] {
+    const out: PrLink[] = [];
+    const seen = new Set<string>();
+    const push = (link: PrLink | null): void => {
+        if (!link) {
+            return;
+        }
+        const key = `${link.host}/${link.owner}/${link.repo}#${link.number}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            out.push(link);
+        }
+    };
+    for (const raw of text.match(/https?:\/\/[^\s"'`)\]]+/g) ?? []) {
+        push(parsePrUrlShape(raw));
+    }
+    for (const token of text.split(/[\s"'`()[\]<>]+/)) {
+        push(parsePrUrlShape(token));
+    }
+    return out;
+}
+
+/**
  * Finds the target PR link in the first user message. The whole message is
  * scanned: expanded command prompts can carry the link deep into the body,
  * so no head window is applied. Full URLs are matched first (they carry the
@@ -45,18 +77,5 @@ function parsePrUrlShape(raw: string): PrLink | null {
  * @returns parsed PR link or null
  */
 export function findPrUrl(text: string): PrLink | null {
-    const urls = text.match(/https?:\/\/[^\s"'`)\]]+/g) ?? [];
-    for (const raw of urls) {
-        const link = parsePrUrlShape(raw);
-        if (link) {
-            return link;
-        }
-    }
-    for (const token of text.split(/[\s"'`()[\]<>]+/)) {
-        const link = parsePrUrlShape(token);
-        if (link) {
-            return link;
-        }
-    }
-    return null;
+    return findPrCandidates(text)[0] ?? null;
 }

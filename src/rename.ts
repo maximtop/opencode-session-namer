@@ -1,4 +1,4 @@
-import { findPrUrl } from './pr-link';
+import { findPrCandidates } from './pr-link';
 import { createPrLinkExtractor } from './pr-link-llm';
 import { fetchGhPrInfo } from './github';
 import { messageText } from './messages';
@@ -142,6 +142,32 @@ export function createRenamer(deps: RenamerDeps) {
             rec.givenUp = true;
         }
         return true;
+    };
+
+    /**
+     * Decides whether a parsed candidate may name the session. Short
+     * owner/repo#N forms are ambiguous with file references
+     * (src/rename.ts#42), so they only stand when gh verified the repo; a
+     * full URL stands on its own and keeps URL-only naming when gh fails.
+     * @param candidate parsed PR link candidate
+     * @param info PR info from gh, or null when the fetch failed
+     * @param sessionID session being renamed (for the drop log)
+     * @returns true when the candidate may name the session
+     */
+    const isUsablePr = (
+        candidate: PrLink,
+        info: PrInfo | null,
+        sessionID: string,
+    ): boolean => {
+        if (!candidate.shortForm || info) {
+            return true;
+        }
+        log('info', 'dropping unverified short-form PR reference', {
+            sessionID,
+            candidate:
+                `${candidate.owner}/${candidate.repo}#${candidate.number}`,
+        });
+        return false;
     };
 
     /**
@@ -308,11 +334,40 @@ export function createRenamer(deps: RenamerDeps) {
         }
 
         let title: string | null = null;
-        let pr = findPrUrl(text);
+        let pr: PrLink | null = null;
+        let prInfo: PrInfo | null = null;
+        // Every candidate is checked against gh up front (concurrent — gh
+        // is a local CLI) and the first usable one wins: a file reference
+        // like src/rename.ts#42 parses as a short form but is not a PR, so
+        // it must not shadow a real PR link later in the message.
+        const checks = await Promise.all(findPrCandidates(text).map(
+            async (candidate) => ({
+                candidate,
+                info: await fetchGhPrInfo(candidate, log),
+            }),
+        ));
+        for (const { candidate, info } of checks) {
+            if (isUsablePr(candidate, info, sessionID)) {
+                pr = candidate;
+                prInfo = info;
+                break;
+            }
+        }
         if (!pr && config.prLinkLlm) {
             // no URL-shaped token — ask a small model which PR is referenced
             try {
-                pr = await extractPrLink(text, sessionID, session.directory);
+                const extracted = await extractPrLink(
+                    text,
+                    sessionID,
+                    session.directory,
+                );
+                if (extracted) {
+                    const info = await fetchGhPrInfo(extracted, log);
+                    if (isUsablePr(extracted, info, sessionID)) {
+                        pr = extracted;
+                        prInfo = info;
+                    }
+                }
             } catch (e) {
                 log('warn', 'pr-link llm extraction failed, naming by project', {
                     sessionID,
@@ -321,14 +376,7 @@ export function createRenamer(deps: RenamerDeps) {
             }
         }
         if (pr) {
-            const info = await fetchGhPrInfo(pr, log);
-            // short owner/repo#N forms are ambiguous with file references
-            // (src/rename.ts#42) — drop them when gh can't verify the repo
-            if (pr.shortForm && !info) {
-                pr = null;
-            } else {
-                title = await prTitle(pr, info, sessionID, session.directory);
-            }
+            title = await prTitle(pr, prInfo, sessionID, session.directory);
         }
         if (!pr) {
             const dir = await projectForDirectory(
