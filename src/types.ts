@@ -73,7 +73,7 @@ export interface SessionInfo {
      */
     directory?: string;
     /**
-     * Parent session id — present on child (subagent) sessions.
+     * Parent session id — present on child (sub-agent) sessions.
      */
     parentID?: string;
 }
@@ -98,6 +98,12 @@ export interface PrLink {
      * Pull request number as it appears in the URL.
      */
     number: string;
+    /**
+     * True when parsed from the short owner/repo#N form rather than a URL.
+     * Short forms are ambiguous with file references (src/rename.ts#42), so
+     * the caller verifies them against gh before adopting PR naming.
+     */
+    shortForm?: boolean;
 }
 
 /**
@@ -175,8 +181,10 @@ export interface TrackedSession {
      */
     renameAttempts: number;
     /**
-     * True when the session is a throwaway child session (smashShorten,
-     * pr-link extraction) — never scheduled, never persisted.
+     * True when the session is a throwaway child session (smartShorten,
+     * pr-link extraction) — never scheduled, and never persisted when the
+     * session.created event was observed. The rename.ts parentID branch
+     * backstops children created before the plugin loaded (hot reload).
      */
     child: boolean;
     /**

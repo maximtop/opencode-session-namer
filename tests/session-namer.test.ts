@@ -10,10 +10,11 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import type { Plugin } from '@opencode-ai/plugin';
 import type {
     PluginClient,
-    PluginConfig,
     TrackedSession,
 } from '../src/types';
 import { findPrUrl } from '../src/pr-link';
+import { loadConfig } from '../src/config';
+import { SessionNamer } from '../src/index';
 import type { ChangePatch } from '../src/tracking';
 
 const tmp = await fsp.mkdtemp(join(tmpdir(), 'session-namer-test-'));
@@ -29,8 +30,6 @@ type Hooks = NonNullable<Awaited<ReturnType<Plugin>>>;
  * The plugin context type (used to type the mocked context).
  */
 type Ctx = Parameters<Plugin>[0];
-
-let SessionNamer: Plugin;
 
 // Portable fixtures: plain git projects (one on a keyed branch, one
 // branchless) and a linked-worktree pair. They live next to this file (not
@@ -55,8 +54,6 @@ beforeAll(async () => {
     await fsp.writeFile(join(wtGitdir, 'HEAD'), 'ref: refs/heads/fix/AG-56856\n');
     await fsp.mkdir(worktree, { recursive: true });
     await fsp.writeFile(join(worktree, '.git'), `gitdir: ${wtGitdir}\n`);
-    const plugin = await import('../src/index');
-    SessionNamer = plugin.SessionNamer;
 });
 
 /**
@@ -149,7 +146,7 @@ function makeClient(options: MockOptions) {
     };
     // Captured query of every session call, for directory assertions.
     const queries: Array<{ method: string; directory?: string }> = [];
-    const expectDirectory = (method: string, opts: {
+    const recordQuery = (method: string, opts: {
         query?: { directory?: string };
     }): void => {
         queries.push({ method, directory: opts.query?.directory });
@@ -163,13 +160,13 @@ function makeClient(options: MockOptions) {
         },
         session: {
             get: async (opts: { query?: { directory?: string } }) => {
-                expectDirectory('get', opts);
+                recordQuery('get', opts);
                 return { data: session };
             },
             messages: async (
                 opts: { path: { id: string }; query?: { directory?: string } },
             ) => {
-                expectDirectory('messages', opts);
+                recordQuery('messages', opts);
                 if (opts.path.id.startsWith('child_')) {
                     return {
                         data: [{
@@ -191,7 +188,11 @@ function makeClient(options: MockOptions) {
                     })),
                 };
             },
-            update: async (opts: { body: { title?: string } }) => {
+            update: async (opts: {
+                body: { title?: string };
+                query?: { directory?: string };
+            }) => {
+                recordQuery('update', opts);
                 if (failedUpdates > 0) {
                     failedUpdates -= 1;
                     return { error: { message: 'boom' } };
@@ -203,7 +204,7 @@ function makeClient(options: MockOptions) {
                 return { data: session };
             },
             create: async (opts: { query?: { directory?: string } }) => {
-                expectDirectory('create', opts);
+                recordQuery('create', opts);
                 if (failCreate) {
                     throw new Error('boom');
                 }
@@ -211,14 +212,18 @@ function makeClient(options: MockOptions) {
                 return { data: { id: `child_${session.id}` } };
             },
             prompt: async (
-                opts: { body: { parts: Array<{ text: string }> } },
+                opts: {
+                    body: { parts: Array<{ text: string }> };
+                    query?: { directory?: string };
+                },
             ) => {
+                recordQuery('prompt', opts);
                 childCalls.prompted += 1;
                 childCalls.lastPrompt = opts.body.parts[0]?.text ?? null;
                 return { data: {} };
             },
             delete: async (opts: { query?: { directory?: string } }) => {
-                expectDirectory('delete', opts);
+                recordQuery('delete', opts);
                 childCalls.deleted += 1;
                 return { data: true };
             },
@@ -955,14 +960,6 @@ describe('fast message-triggered rename', () => {
 });
 
 describe('loadConfig (zod coercion)', () => {
-    // Imported lazily (after the top-level beforeAll has loaded config.ts
-    // against the tmp SESSION_NAMER_CONFIG) so the module-level CONFIG_FILE
-    // resolves to the test file, not the real user config.
-    let loadConfig: () => Promise<PluginConfig>;
-    beforeAll(async () => {
-        loadConfig = (await import('../src/config')).loadConfig;
-    });
-
     it('fills defaults for a missing/empty config', async () => {
         await writeConfig({});
         const cfg = await loadConfig();
@@ -1078,6 +1075,7 @@ describe('findPrUrl (PR-link extraction)', () => {
                 owner: 'AdGuardSoftwareLimited',
                 repo: 'vpn-extension',
                 number: '5',
+                shortForm: true,
             });
         expect(findPrUrl('[the PR](https://github.com/o/r/pull/7) here'))
             .toEqual({

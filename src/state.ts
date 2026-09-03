@@ -99,6 +99,9 @@ export async function saveState(state: State, log?: LogFn): Promise<void> {
     };
     tmpSeq += 1;
     const tmp = `${stateFile()}.${process.pid}.${tmpSeq}.tmp`;
+    // A crash between the tmp write and the rename leaves an orphaned tmp
+    // file behind. Deliberately not swept: a sweep could delete another
+    // live process's in-flight tmp, which is worse than a stale leftover.
     try {
         await fsp.mkdir(dirname(stateFile()), { recursive: true });
         await fsp.writeFile(tmp, JSON.stringify(next));

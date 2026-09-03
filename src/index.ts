@@ -27,6 +27,30 @@ import type {
 } from './types';
 
 /**
+ * Event properties shapes that carry a session id — info-wrapped for
+ * session.* events, flat for message.updated.
+ */
+interface EventProps {
+    /**
+     * Session payload of session.* events.
+     */
+    info?: {
+        /**
+         * Session id on session.* events.
+         */
+        id?: string;
+        /**
+         * Session id on chat.params-style payloads.
+         */
+        sessionID?: string;
+    };
+    /**
+     * Session id on message.updated events.
+     */
+    sessionID?: string;
+}
+
+/**
  * The plugin factory. Loads config and state, wires the renamer and returns
  * the event hook that schedules a one-time rename on the first user
  * message, with the first idle as fallback.
@@ -320,18 +344,10 @@ export const SessionNamer: Plugin = async ({ client }) => {
                     }
                 }
             } catch (e) {
-                const props = event.properties as Record<string, unknown>;
-                const info = (typeof props?.info === 'object' && props.info !== null)
-                    ? props.info as Record<string, unknown>
-                    : undefined;
-                let sessionID: string | undefined;
-                if (typeof info?.id === 'string') {
-                    sessionID = info.id;
-                } else if (typeof info?.sessionID === 'string') {
-                    sessionID = info.sessionID;
-                } else if (typeof props?.sessionID === 'string') {
-                    sessionID = props.sessionID;
-                }
+                const props = event.properties as EventProps | undefined;
+                const sessionID = props?.info?.id
+                    ?? props?.info?.sessionID
+                    ?? props?.sessionID;
                 log('error', 'event handler failed', {
                     sessionID,
                     error: String(e),

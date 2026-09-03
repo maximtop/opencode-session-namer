@@ -52,7 +52,7 @@ export function createPrLinkExtractor(
     /**
      * Asks a small model (in a throwaway child session locked down to a
      * text-only reply: tools disabled, fixed system prompt) which PR the
-     * message references. The whole message is passed — no window. Any
+     * message references. The message is windowed to MAX_PROMPT_TEXT. Any
      * failure or unparseable reply yields null so the caller falls back to
      * naming by project.
      * @param text first user message text

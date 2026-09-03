@@ -43,9 +43,9 @@ disabled.
 │   ├── state.ts               # rename-once state file
 │   ├── tracking.ts            # title-provenance state machine (pure)
 │   ├── messages.ts            # first/newest message text part helper
-│   ├── text.ts                # template/humanize/truncate helpers
+│   ├── text.ts                # template/humanize/truncate/sanitize helpers
 │   └── types.ts               # shared types
-├── tests/session-namer.test.ts  # vitest suite with a mock opencode client
+├── tests/session-namer.test.ts # vitest suite with a mock opencode client
 ├── package.json               # scripts and dev dependencies
 ├── tsconfig.json              # strict TS, noEmit
 ├── .eslintrc.cjs              # airbnb + airbnb-typescript + jsdoc

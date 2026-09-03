@@ -20,12 +20,13 @@ effect on the next restart.
 ```sh
 git pull          # check out a release tag if you want a pinned version
 pnpm install      # dependencies changed? re-run; the plugin needs them
-opencode          # restart
 ```
+
+Then restart opencode to pick up the changes.
 
 A checkout install tracks the default branch; to follow releases instead,
 create the checkout at a tag (`git clone --branch v<version> …`, or
-`git fetch && git checkout v<version>`) and update the symlink on upgrade.
+`git fetch && git checkout v<version>`).
 
 ## Uninstall
 

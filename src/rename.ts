@@ -26,21 +26,6 @@ import type {
 } from './types';
 
 /**
- * Query params declared by the SDK's generated SessionMessagesData type.
- * The server accepts extra params (order); the generated types lag behind.
- */
-type MessagesQuery = {
-    /**
-     * Project directory scoping.
-     */
-    directory?: string;
-    /**
-     * Message window size.
-     */
-    limit?: number;
-};
-
-/**
  * Rename attempts before the session is given up — bounds the
  * refetch-every-idle loop for all-synthetic sessions and a persistently
  * failing title write.
@@ -133,6 +118,33 @@ export function createRenamer(deps: RenamerDeps) {
     const extractPrLink = createPrLinkExtractor(client, config, log);
 
     /**
+     * Counts a failed rename attempt and gives up (sets givenUp, holds the
+     * latch) once the budget is exhausted. A give-up never markProcesseds:
+     * a later user message is new evidence and must re-arm the rename.
+     * @param sessionID session being renamed
+     * @param reason short reason for the warn log
+     * @returns true when the attempt budget is exhausted
+     */
+    const noteFailedAttempt = (
+        sessionID: string,
+        reason: string,
+    ): boolean => {
+        const rec = tracked.get(sessionID);
+        const attempts = (rec?.renameAttempts ?? 0) + 1;
+        if (rec) {
+            rec.renameAttempts = attempts;
+        }
+        if (attempts <= MAX_RENAME_ATTEMPTS) {
+            return false;
+        }
+        log('warn', `giving up: ${reason}`, { sessionID, attempts });
+        if (rec) {
+            rec.givenUp = true;
+        }
+        return true;
+    };
+
+    /**
      * Composes the final title. When it exceeds maxLength, only the
      * descriptive part is shortened — the structural prefix and keepPrefix
      * (e.g. "Review pull/N ") stay intact.
@@ -185,20 +197,22 @@ export function createRenamer(deps: RenamerDeps) {
     }
 
     /**
-     * Builds the PR-based title: fetches PR data via gh, extracts the issue
-     * key and composes the final name.
+     * Builds the PR-based title: uses the already-fetched PR data, extracts
+     * the issue key and composes the final name.
      * @param pr parsed PR link
+     * @param info PR info from gh, or null when the fetch failed (URL-only
+     * naming)
      * @param sessionID session being renamed
      * @param directory session working directory
      * @returns final session title
      */
     async function prTitle(
         pr: PrLink,
+        info: PrInfo | null,
         sessionID: string,
         directory: string,
     ): Promise<string> {
         const project = humanize(pr.repo);
-        const info: PrInfo | null = await fetchGhPrInfo(pr, log);
         const agKey = extractAgKey(info?.branch)
             ?? extractAgKey(info?.title);
         // PR titles often start with the issue key ("AG-31699: Add …") —
@@ -273,38 +287,20 @@ export function createRenamer(deps: RenamerDeps) {
             }
         }
 
-        // The server lists messages newest-first by default; the rename needs
-        // the session's FIRST textful user message, so page from the oldest
-        // end. `order` is not in the SDK's generated types yet (newer
-        // servers honor it; older ones ignore extra query params and degrade
-        // to the old desc behavior).
-        const messagesQuery = {
-            directory: session.directory,
-            limit: 25,
-            order: 'asc',
-        };
+        // No limit: the v1 messages endpoint has no `order` param, and when
+        // a limit is set it pages newest-first (desc + limit, reversed for
+        // the response) — a bounded window can't reliably reach the
+        // session's FIRST textful user message. With no limit the handler
+        // returns the full history; the give-up cap below bounds the cost.
         const messages = await client.session.messages({
             path: { id: sessionID },
-            query: messagesQuery as unknown as MessagesQuery,
+            query: { directory: session.directory },
         });
         const text = messageText(messages.data ?? [], 'user', 'first');
         if (!text) {
             // no user message yet (idle before the first message) — retry
-            // on a later idle, but give up on sessions that never get one.
-            // The give-up does NOT markProcessed: a later user message is a
-            // new fact and must re-arm the rename (index.ts clears givenUp).
-            const attempts = (rec?.renameAttempts ?? 0) + 1;
-            if (rec) {
-                rec.renameAttempts = attempts;
-            }
-            if (attempts > MAX_RENAME_ATTEMPTS) {
-                log('warn', 'giving up: still no user message', {
-                    sessionID,
-                    attempts,
-                });
-                if (rec) {
-                    rec.givenUp = true;
-                }
+            // on a later idle
+            if (noteFailedAttempt(sessionID, 'still no user message')) {
                 return;
             }
             releaseScheduled(sessionID);
@@ -325,8 +321,16 @@ export function createRenamer(deps: RenamerDeps) {
             }
         }
         if (pr) {
-            title = await prTitle(pr, sessionID, session.directory);
-        } else {
+            const info = await fetchGhPrInfo(pr, log);
+            // short owner/repo#N forms are ambiguous with file references
+            // (src/rename.ts#42) — drop them when gh can't verify the repo
+            if (pr.shortForm && !info) {
+                pr = null;
+            } else {
+                title = await prTitle(pr, info, sessionID, session.directory);
+            }
+        }
+        if (!pr) {
             const dir = await projectForDirectory(
                 session.directory,
                 extractAgKey,
@@ -361,21 +365,8 @@ export function createRenamer(deps: RenamerDeps) {
             });
             if (res.error) {
                 // a failed write must not consume the rename-once budget —
-                // retry on a later idle, but a persistently failing write
-                // must not re-run the whole pipeline (gh, LLM children) on
-                // every idle forever.
-                const attempts = (rec?.renameAttempts ?? 0) + 1;
-                if (rec) {
-                    rec.renameAttempts = attempts;
-                }
-                if (attempts > MAX_RENAME_ATTEMPTS) {
-                    log('warn', 'giving up: title write keeps failing', {
-                        sessionID,
-                        attempts,
-                    });
-                    if (rec) {
-                        rec.givenUp = true;
-                    }
+                // retry on a later idle
+                if (noteFailedAttempt(sessionID, 'title write keeps failing')) {
                     return;
                 }
                 log('warn', 'title write failed, will retry on next idle', {
