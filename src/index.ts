@@ -19,6 +19,13 @@ import { loadState, saveState } from './state';
 import { createRenamer } from './rename';
 import type { AgKeyExtractor, TrackedSession } from './types';
 
+/**
+ * The plugin factory. Loads config and state, wires the renamer and returns
+ * the event hook that schedules a one-time rename after the first idle.
+ * @param ctx plugin context provided by opencode
+ * @param ctx.client opencode SDK client
+ * @returns plugin hooks
+ */
 export const SessionNamer: Plugin = async ({ client }) => {
     const log = (
         level: 'info' | 'warn' | 'error',
@@ -77,6 +84,13 @@ export const SessionNamer: Plugin = async ({ client }) => {
     });
 
     return {
+        /**
+         * Tracks sessions and schedules the rename. `session.updated` events
+         * tell the built-in auto-title apart from manual/external renames;
+         * `session.idle` arms the delayed rename.
+         * @param input opencode event envelope
+         * @param input.event the event payload
+         */
         event: async ({ event }) => {
             try {
                 if (event.type === 'session.created') {

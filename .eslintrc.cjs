@@ -72,6 +72,8 @@ module.exports = {
             rules: {
                 'jsdoc/require-jsdoc': ['error', {
                     contexts: [
+                        'FunctionDeclaration',
+                        'MethodDefinition',
                         'TSInterfaceDeclaration',
                         'TSTypeAliasDeclaration',
                         'TSPropertySignature',
