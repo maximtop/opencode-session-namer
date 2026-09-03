@@ -57,7 +57,9 @@ export function classifyTitleChange(
         };
     }
     let { autoTitle, foreign } = rec;
-    if (!rec.sawUserMessage) {
+    const bothDefault = DEFAULT_TITLE_RE.test(rec.lastTitle)
+        && DEFAULT_TITLE_RE.test(newTitle);
+    if (!rec.sawUserMessage && !bothDefault) {
         // titled before any user message (picker / manual)
         foreign = true;
     } else if (autoTitle === undefined && !DEFAULT_TITLE_RE.test(newTitle)) {

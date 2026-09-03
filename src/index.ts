@@ -110,13 +110,10 @@ export const SessionNamer: Plugin = async ({ client }) => {
                 }
                 if (event.type === 'session.updated') {
                     const info = event.properties?.info;
-                    if (!info?.id) {
+                    if (!info?.id || state.processed[info.id]) {
                         return;
                     }
                     const rec = recordFor(info.id);
-                    if (state.processed[info.id]) {
-                        return;
-                    }
                     const patch = classifyTitleChange(rec, info.title);
                     rec.foreign = patch.foreign;
                     rec.autoTitle = patch.autoTitle;
@@ -137,11 +134,6 @@ export const SessionNamer: Plugin = async ({ client }) => {
                     }
                     const rec = recordFor(sessionID);
                     if (rec.foreign) {
-                        return;
-                    }
-                    if (!rec.sawUserMessage) {
-                        // idle before the first message: wait for a later
-                        // idle so the session is not burned unrenamed
                         return;
                     }
                     if (rec.scheduled) {

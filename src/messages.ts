@@ -55,26 +55,31 @@ interface MessageLike {
 }
 
 /**
- * Extracts the text of the most recent message of the requested role.
- * Returns null when no such message has a non-synthetic text part.
+ * Extracts the text of the first or most recent message of the requested
+ * role. Returns null when no such message has a non-synthetic text part.
  * @param messages messages from session.messages
  * @param role message role to pick
- * @returns joined text of the newest matching message, or null
+ * @param which pick the first ('first' — rename semantics, README promises
+ * the first user message) or the most recent ('newest' — reply reading)
+ * @returns joined text of the picked message, or null
  */
-export function newestText(
+export function messageText(
     messages: MessageLike[],
     role: 'user' | 'assistant',
+    which: 'first' | 'newest',
 ): string | null {
     const candidates = messages
         .filter((m) => m.info?.role === role)
         .sort(
             (a, b) => (a.info.time?.created ?? 0) - (b.info.time?.created ?? 0),
         );
-    const latest = candidates[candidates.length - 1];
-    if (!latest) {
+    const picked = which === 'first'
+        ? candidates[0]
+        : candidates[candidates.length - 1];
+    if (!picked) {
         return null;
     }
-    const texts = (latest.parts ?? [])
+    const texts = (picked.parts ?? [])
         .filter((p) => p.type === 'text' && !p.synthetic && p.text?.trim())
         .map((p) => p.text ?? '');
     return texts.length > 0 ? texts.join('\n') : null;

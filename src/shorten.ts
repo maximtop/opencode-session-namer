@@ -1,4 +1,4 @@
-import { newestText } from './messages';
+import { messageText } from './messages';
 import { truncateAtWord } from './text';
 import type { PluginClient, PluginConfig } from './types';
 
@@ -111,9 +111,10 @@ export function createSmartShorten(
                 path: { id: childID },
                 query: { directory },
             });
-            const shortened = newestText(
+            const shortened = messageText(
                 msgs.data ?? [],
                 'assistant',
+                'newest',
             )?.split('\n')[0]?.trim();
             if (!shortened) {
                 throw new Error('empty shorten reply');

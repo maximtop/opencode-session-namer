@@ -71,6 +71,16 @@ All optional; create `~/.config/opencode/session-namer.json` to override:
 
 When enabled, an overlong descriptive part is shortened by a small model through a throwaway sub-session (created, prompted once, deleted). Only the descriptive part is shortened — the structural prefix (`[project] AG-123 Review pull/N`) stays intact. On any failure the plugin falls back to word truncation.
 
+## Security
+
+- Only `github.com` PR links are fetched. Hosts from untrusted messages are
+  never passed to `gh`: `gh` forwards GitHub Enterprise tokens to whatever
+  host `GH_HOST` names, so doing so would have exfiltrated the user's tokens
+  to an attacker-controlled host. Enterprise hosts are simply not supported.
+- Titles are sanitized of C0/C1 control characters before `session.update`,
+  so a crafted PR title or model reply cannot inject terminal sequences.
+- The plugin never logs tokens or other secrets.
+
 ## Requirements
 
 - PR titles require the `gh` CLI, authenticated (`gh auth login`). Without it, PR sessions are named from the URL alone: `[compiler] Review pull/386`.

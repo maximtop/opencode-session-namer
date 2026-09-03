@@ -1,6 +1,6 @@
 import { findPrUrl } from './pr-link';
 import { fetchGhPrInfo } from './github';
-import { newestText } from './messages';
+import { messageText } from './messages';
 import { projectForDirectory } from './project';
 import { createSmartShorten } from './shorten';
 import {
@@ -251,7 +251,7 @@ export function createRenamer(deps: RenamerDeps) {
             path: { id: sessionID },
             query: { directory: session.directory, limit: 50 },
         });
-        const text = newestText(messages.data ?? [], 'user');
+        const text = messageText(messages.data ?? [], 'user', 'first');
         if (!text) {
             // no user message yet (idle before the first message) — do not
             // burn the session; a later idle will retry

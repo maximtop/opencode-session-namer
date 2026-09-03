@@ -105,6 +105,11 @@ interface MockOptions {
      * Make session.create throw to simulate smartShorten failure.
      */
     failCreate?: boolean;
+    /**
+     * When set, session.messages returns no user text until the predicate
+     * yields true (simulates an idle before the first message).
+     */
+    suppressUserTextUntil?: () => boolean;
 }
 
 /**
@@ -113,7 +118,9 @@ interface MockOptions {
  * @returns mock client, captured title updates, child-session call counters
  */
 function makeClient(options: MockOptions) {
-    const { session, firstUserText, shortenReply, failCreate } = options;
+    const {
+        session, firstUserText, shortenReply, failCreate, suppressUserTextUntil,
+    } = options;
     const updates: Array<{ body: { title?: string } }> = [];
     const childCalls = {
         created: 0, prompted: 0, deleted: 0, lastPrompt: null as string | null,
@@ -135,6 +142,9 @@ function makeClient(options: MockOptions) {
                             parts: [{ type: 'text', text: shortenReply ?? 'shortened' }],
                         }],
                     };
+                }
+                if (suppressUserTextUntil && !suppressUserTextUntil()) {
+                    return { data: [] };
                 }
                 return {
                     data: [{
@@ -546,6 +556,13 @@ describe('classifyTitleChange (title provenance)', () => {
         expect(second.foreign).toBe(true);
     });
 
+    it('tracks a default-title refresh before the message as non-foreign', async () => {
+        const rec = freshRec();
+        await classify(rec, 'New session - 2026-…');
+        const patch = await classify(rec, 'New session - 2026-… (restored)');
+        expect(patch.foreign).toBe(false);
+    });
+
     it('captures the post-user-message change as the auto-title', async () => {
         const rec = freshRec();
         rec.sawUserMessage = true;
@@ -577,10 +594,12 @@ describe('classifyTitleChange (title provenance)', () => {
 describe('idle before the first user message', () => {
     it('does not burn the session and renames on a later idle', async () => {
         await writeConfig({});
+        let sent = false;
         const session = freshSession({ directory: gitProject });
         const { client, updates } = makeClient({
             session,
             firstUserText: 'fix the broken test',
+            suppressUserTextUntil: () => sent,
         });
         const hooks = await SessionNamer({ client } as Ctx);
         await hooks.event?.({
@@ -594,6 +613,7 @@ describe('idle before the first user message', () => {
         });
         expect(updates).toHaveLength(0);
         expect(session.title).toBe('New session - 2026-09-03T10:00:00.000Z');
+        sent = true;
         await hooks.event?.({
             event: {
                 type: 'message.updated',
