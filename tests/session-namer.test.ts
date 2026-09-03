@@ -110,6 +110,11 @@ interface MockOptions {
      * yields true (simulates an idle before the first message).
      */
     suppressUserTextUntil?: () => boolean;
+    /**
+     * Chronological user messages (null entry = a message without a text
+     * part). Defaults to a single message with firstUserText.
+     */
+    userTexts?: Array<string | null>;
 }
 
 /**
@@ -120,6 +125,7 @@ interface MockOptions {
 function makeClient(options: MockOptions) {
     const {
         session, firstUserText, shortenReply, failCreate, suppressUserTextUntil,
+        userTexts,
     } = options;
     const updates: Array<{ body: { title?: string } }> = [];
     const childCalls = {
@@ -146,11 +152,14 @@ function makeClient(options: MockOptions) {
                 if (suppressUserTextUntil && !suppressUserTextUntil()) {
                     return { data: [] };
                 }
+                const texts = userTexts ?? [firstUserText];
                 return {
-                    data: [{
-                        info: { role: 'user', time: { created: 1 } },
-                        parts: [{ type: 'text', text: firstUserText }],
-                    }],
+                    data: texts.map((text, i) => ({
+                        info: { role: 'user', time: { created: i + 1 } },
+                        parts: text === null
+                            ? [{ type: 'file', filePath: 'attachment.bin' }]
+                            : [{ type: 'text', text }],
+                    })),
                 };
             },
             update: async (opts: { body: { title?: string } }) => {
@@ -633,4 +642,56 @@ describe('idle before the first user message', () => {
         await waitFor(() => updates.length > 0);
         expect(updates[0]?.body.title).toBe('[browser-extension] Fixing the flaky test');
     });
+});
+
+describe('first-message semantics', () => {
+    it('names from the first user message when later messages are plain', async () => {
+        await writeConfig({});
+        const session = freshSession();
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: `review ${PR_URL}`,
+            userTexts: [
+                `review ${PR_URL}`,
+                'and add more context here',
+            ],
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await drive(hooks, session, { autoTitle: 'Review pull request', updates });
+        expect(updates).toHaveLength(1);
+        expect(updates[0]?.body.title).toContain('pull/1226');
+    }, 30000);
+
+    it('skips a textless first message and uses the first textful one', async () => {
+        await writeConfig({});
+        const session = freshSession();
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: `review ${PR_URL}`,
+            userTexts: [null, `review ${PR_URL}`],
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        // the first user message has only a non-text part (no text)
+        await hooks.event?.({
+            event: { type: 'session.created', properties: { info: { ...session } } },
+        } as never);
+        await hooks.event?.({
+            event: {
+                type: 'message.updated',
+                properties: { info: { role: 'user', sessionID: session.id } },
+            },
+        } as never);
+        session.title = 'Review pull request';
+        await hooks.event?.({
+            event: {
+                type: 'session.updated',
+                properties: { info: { ...session } },
+            },
+        } as never);
+        await hooks.event?.({
+            event: { type: 'session.idle', properties: { sessionID: session.id } },
+        } as never);
+        await waitFor(() => updates.length > 0);
+        expect(updates[0]?.body.title).toContain('pull/1226');
+    }, 30000);
 });

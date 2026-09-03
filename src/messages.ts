@@ -55,12 +55,12 @@ interface MessageLike {
 }
 
 /**
- * Extracts the text of the first or most recent message of the requested
- * role. Returns null when no such message has a non-synthetic text part.
- * @param messages messages from session.messages
+ * Skips messages without a non-synthetic text part and returns the text of
+ * the first (by direction) textual message of the requested role.
+ * @param messages messages from session.messages (any order; sorted here)
  * @param role message role to pick
  * @param which pick the first ('first' — rename semantics, README promises
- * the first user message) or the most recent ('newest' — reply reading)
+ * the first textful user message) or the most recent ('newest' — replies)
  * @returns joined text of the picked message, or null
  */
 export function messageText(
@@ -73,14 +73,14 @@ export function messageText(
         .sort(
             (a, b) => (a.info.time?.created ?? 0) - (b.info.time?.created ?? 0),
         );
-    const picked = which === 'first'
-        ? candidates[0]
-        : candidates[candidates.length - 1];
-    if (!picked) {
-        return null;
+    const ordered = which === 'first' ? candidates : [...candidates].reverse();
+    for (const message of ordered) {
+        const texts = (message.parts ?? [])
+            .filter((p) => p.type === 'text' && !p.synthetic && p.text?.trim())
+            .map((p) => p.text ?? '');
+        if (texts.length > 0) {
+            return texts.join('\n');
+        }
     }
-    const texts = (picked.parts ?? [])
-        .filter((p) => p.type === 'text' && !p.synthetic && p.text?.trim())
-        .map((p) => p.text ?? '');
-    return texts.length > 0 ? texts.join('\n') : null;
+    return null;
 }

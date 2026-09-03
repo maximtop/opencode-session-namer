@@ -29,7 +29,15 @@ const STRING_KEYS = ['template', 'prPrefix', 'agKeyPattern', 'smartShortenModel'
  */
 function coerceValue(key: string, value: unknown): unknown {
     if (NUMBER_KEYS.includes(key)) {
-        const num = typeof value === 'number' ? value : Number(value);
+        if (typeof value === 'boolean') {
+            return DEFAULTS[key as keyof PluginConfig];
+        }
+        let num = NaN;
+        if (typeof value === 'number') {
+            num = value;
+        } else if (typeof value === 'string') {
+            num = Number(value);
+        }
         return Number.isInteger(num) && num > 0
             ? num
             : DEFAULTS[key as keyof PluginConfig];

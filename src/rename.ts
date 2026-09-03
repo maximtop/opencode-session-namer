@@ -249,7 +249,7 @@ export function createRenamer(deps: RenamerDeps) {
 
         const messages = await client.session.messages({
             path: { id: sessionID },
-            query: { directory: session.directory, limit: 50 },
+            query: { directory: session.directory, limit: 200 },
         });
         const text = messageText(messages.data ?? [], 'user', 'first');
         if (!text) {
