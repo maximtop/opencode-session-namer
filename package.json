@@ -3,14 +3,16 @@
   "version": "0.1.0",
   "description": "opencode plugin that names sessions from PR links and project directories: [project] AG-123 Review pull/1226 <PR title>",
   "type": "module",
-  "main": "index.js",
+  "main": "index.ts",
   "files": [
-    "index.js",
+    "index.ts",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "test": "bun test.js"
+    "lint": "eslint .",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run"
   },
   "keywords": [
     "opencode",
@@ -21,5 +23,19 @@
   "license": "MIT",
   "peerDependencies": {
     "@opencode-ai/plugin": "*"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.18.27",
+    "@types/node": "^24.9.1",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.1",
+    "eslint-config-airbnb-base": "^15.0.0",
+    "eslint-config-airbnb-typescript": "^18.0.0",
+    "eslint-import-resolver-typescript": "^4.4.4",
+    "eslint-plugin-import": "^2.31.0",
+    "eslint-plugin-jsdoc": "^60.6.0",
+    "typescript": "^5.8.3",
+    "vitest": "^4.0.6"
   }
 }

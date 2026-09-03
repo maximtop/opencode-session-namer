@@ -39,7 +39,8 @@ Or from a local checkout:
 
 ```sh
 git clone https://github.com/maximtop/opencode-session-namer
-ln -s "$PWD/opencode-session-namer/index.js" ~/.config/opencode/plugins/session-namer.js
+ln -s "$PWD/opencode-session-namer/index.ts" \
+  ~/.config/opencode/plugins/session-namer.ts
 ```
 
 Restart opencode / OpenChamber to load the plugin.
@@ -70,5 +71,11 @@ When enabled, an overlong descriptive part is shortened by a small model through
 ## Development
 
 ```sh
-bun test.js   # mock-client test suite (makes real `gh` calls for the PR cases)
+pnpm install
+make check   # lint + type-check + tests
 ```
+
+The vitest suite drives the plugin with a mock opencode client; the PR cases
+make real `gh` calls and need `gh auth login`.
+
+See also: [AGENTS.md](AGENTS.md), [DEPLOYMENT.md](DEPLOYMENT.md).
