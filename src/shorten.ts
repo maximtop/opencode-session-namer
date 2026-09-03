@@ -1,11 +1,17 @@
 import { truncateAtWord } from './text';
 import type { PluginClient, PluginConfig } from './types';
 
-/** A "provider/model" pair resolved to its two parts. */
+/**
+ * A "provider/model" pair resolved to its two parts.
+ */
 type ModelRef = {
-    /** Provider id, e.g. "anthropic". */
+    /**
+     * Provider id, e.g. "anthropic".
+     */
     providerID: string;
-    /** Model id within the provider, e.g. "claude-haiku-4-5". */
+    /**
+     * Model id within the provider, e.g. "claude-haiku-4-5".
+     */
     modelID: string;
 };
 

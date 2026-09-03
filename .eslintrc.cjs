@@ -23,6 +23,7 @@ const customRules = {
     'no-await-in-loop': 'off',
     'object-curly-newline': ['error', { consistent: true }],
     'jsdoc/check-indentation': 'error',
+    'jsdoc/multiline-blocks': ['error', { noSingleLineBlocks: true }],
     'jsdoc/require-jsdoc': 'off',
 };
 

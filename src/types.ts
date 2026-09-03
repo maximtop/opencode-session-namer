@@ -1,16 +1,22 @@
 import type { Plugin } from '@opencode-ai/plugin';
 
-/** The SDK client opencode hands to the plugin. */
+/**
+ * The SDK client opencode hands to the plugin.
+ */
 export type PluginClient = Parameters<Plugin>[0]['client'];
 
-/** Leveled logger bound to the opencode app log. */
+/**
+ * Leveled logger bound to the opencode app log.
+ */
 export type LogFn = (
     level: 'info' | 'warn' | 'error',
     message: string,
     extra?: Record<string, unknown>,
 ) => void;
 
-/** Effective plugin configuration (user file merged over the defaults). */
+/**
+ * Effective plugin configuration (user file merged over the defaults).
+ */
 export interface PluginConfig {
     /**
      * Name shape with {project} {agKey} {title} slots; empty slots collapse.
@@ -24,68 +30,114 @@ export interface PluginConfig {
      * Regex for the issue key; an optional capture group selects the key.
      */
     agKeyPattern: string;
-    /** Titles longer than this get shortened. */
+    /**
+     * Titles longer than this get shortened.
+     */
     maxLength: number;
-    /** Shorten overlong titles with an LLM instead of a hard word-cut. */
+    /**
+     * Shorten overlong titles with an LLM instead of a hard word-cut.
+     */
     smartShorten: boolean;
-    /** "provider/model" for shortening; defaults to opencode small_model. */
+    /**
+     * "provider/model" for shortening; defaults to opencode small_model.
+     */
     smartShortenModel: string | null;
-    /** Delay after the first idle before renaming. */
+    /**
+     * Delay after the first idle before renaming.
+     */
     renameDelayMs: number;
 }
 
-/** A GitHub pull request link parsed out of the first user message. */
+/**
+ * A GitHub pull request link parsed out of the first user message.
+ */
 export interface PrLink {
-    /** PR URL origin including scheme, e.g. "https://github.com". */
+    /**
+     * PR URL origin including scheme, e.g. "https://github.com".
+     */
     host: string;
-    /** Repository owner (user or org). */
+    /**
+     * Repository owner (user or org).
+     */
     owner: string;
-    /** Repository name. */
+    /**
+     * Repository name.
+     */
     repo: string;
-    /** Pull request number as it appears in the URL. */
+    /**
+     * Pull request number as it appears in the URL.
+     */
     number: string;
 }
 
-/** Project label and issue key derived from the session directory. */
+/**
+ * Project label and issue key derived from the session directory.
+ */
 export interface ProjectInfo {
-    /** Humanized project name, e.g. "filters registry". */
+    /**
+     * Humanized project name, e.g. "filters registry".
+     */
     label: string;
-    /** Issue key from the worktree branch, when detectable. */
+    /**
+     * Issue key from the worktree branch, when detectable.
+     */
     agKey: string | null;
 }
 
-/** Pull request data fetched via the gh CLI. */
+/**
+ * Pull request data fetched via the gh CLI.
+ */
 export interface PrInfo {
-    /** PR title. */
+    /**
+     * PR title.
+     */
     title: string | null;
-    /** Head branch name (displayId). */
+    /**
+     * Head branch name (displayId).
+     */
     branch: string | null;
 }
 
-/** Rename-once persistence state. */
+/**
+ * Rename-once persistence state.
+ */
 export interface State {
-    /** Session id → timestamp of when it was processed. */
+    /**
+     * Session id → timestamp of when it was processed.
+     */
     processed: Record<string, number>;
 }
 
-/** Per-session in-memory tracking used to recognize the auto-title. */
+/**
+ * Per-session in-memory tracking used to recognize the auto-title.
+ */
 export interface TrackedSession {
-    /** Whether a user message was observed for this session. */
+    /**
+     * Whether a user message was observed for this session.
+     */
     sawUserMessage: boolean;
-    /** The title the built-in auto-title set, when observed. */
+    /**
+     * The title the built-in auto-title set, when observed.
+     */
     autoTitle: string | undefined;
     /**
      * True when the title was set by anything other than the auto-title
      * (manual rename, another tool) — such sessions are never renamed.
      */
     foreign: boolean;
-    /** Whether a rename has already been scheduled for this session. */
+    /**
+     * Whether a rename has already been scheduled for this session.
+     */
     scheduled: boolean;
-    /** Last title seen in session.updated events. */
+    /**
+     * Last title seen in session.updated events.
+     */
     lastTitle: string | undefined;
 }
 
-/** Extracts an issue key (e.g. AG-123) from free text. */
+/**
+ * Extracts an issue key (e.g. AG-123) from free text.
+ */
 export type AgKeyExtractor = (
     text: string | null | undefined,
 ) => string | null;
