@@ -11,8 +11,8 @@ An [opencode](https://opencode.ai) plugin that gives sessions meaningful names, 
 
 ## How it works
 
-- If the **first user message contains a GitHub PR link**, the plugin fetches the PR title and branch via the [`gh`](https://cli.github.com) CLI and names the session after it: the repo, the PR number, the PR title. If the branch or title contains an issue key (e.g. `AG-123`), it is included. GitHub Enterprise hosts work via `GH_HOST`.
-- Otherwise, for sessions inside a **git project**, the current auto-generated title gets a project prefix. Issue keys are picked up from the branch name.
+- If the **first user message contains a GitHub pull request link**, the plugin fetches the PR title and branch via the [`gh`](https://cli.github.com) CLI and names the session after it: the repo, the PR number, the PR title. If the branch or title contains an issue key (e.g. `AG-123`), it is included. Only `github.com` hosts are accepted — a host from an untrusted message is never forwarded to `gh` (see Security).
+- Otherwise, for sessions inside a **git project**, the current auto-generated title gets a project prefix. Issue keys are picked up from the branch name. When the built-in title has not settled yet (session title still "New session"), the descriptive part is derived from the first line of the user message.
 - **Worktrees are detected generically**: a linked worktree has a `.git` *file* pointing into the main repo, so the project label is the main repo name and the issue key comes from the worktree branch — no configuration needed, works with any directory layout.
 - Sessions in scratch directories (temp dirs, OpenChamber chat workspaces) keep the plain auto-title.
 - Sub-agent sessions are skipped.
@@ -58,6 +58,14 @@ All optional; create `~/.config/opencode/session-namer.json` to override:
 | `smartShorten` | `false` | Shorten overlong titles with an LLM instead of a hard word-cut. |
 | `smartShortenModel` | `null` | `provider/model` for shortening; defaults to `small_model` from the opencode config. |
 | `renameDelayMs` | `10000` | Delay after the first idle before renaming. |
+
+### Environment overrides
+
+| Variable | Meaning |
+| --- | --- |
+| `SESSION_NAMER_CONFIG` | Config file path instead of `~/.config/opencode/session-namer.json`. |
+| `SESSION_NAMER_STATE` | State file path (rename-once bookkeeping). Entries older than 30 days are pruned on every write. |
+| `SESSION_NAMER_DELAY_MS` | Overrides `renameDelayMs` (test hook; non-negative number). |
 
 ### smartShorten
 

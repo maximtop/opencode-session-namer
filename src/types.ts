@@ -1,12 +1,16 @@
 import type { Plugin } from '@opencode-ai/plugin';
 
 /**
+
  * The SDK client opencode hands to the plugin.
+
  */
 export type PluginClient = Parameters<Plugin>[0]['client'];
 
 /**
+
  * Leveled logger bound to the opencode app log.
+
  */
 export type LogFn = (
     level: 'info' | 'warn' | 'error',
@@ -15,7 +19,9 @@ export type LogFn = (
 ) => void;
 
 /**
+
  * Effective plugin configuration (user file merged over the defaults).
+
  */
 export interface PluginConfig {
     /**
@@ -49,7 +55,9 @@ export interface PluginConfig {
 }
 
 /**
+
  * A GitHub pull request link parsed out of the first user message.
+
  */
 export interface PrLink {
     /**
@@ -71,7 +79,9 @@ export interface PrLink {
 }
 
 /**
+
  * Project label and issue key derived from the session directory.
+
  */
 export interface ProjectInfo {
     /**
@@ -85,7 +95,9 @@ export interface ProjectInfo {
 }
 
 /**
+
  * Pull request data fetched via the gh CLI.
+
  */
 export interface PrInfo {
     /**
@@ -99,7 +111,9 @@ export interface PrInfo {
 }
 
 /**
+
  * Rename-once persistence state.
+
  */
 export interface State {
     /**
@@ -109,7 +123,9 @@ export interface State {
 }
 
 /**
+
  * Per-session in-memory tracking used to recognize the auto-title.
+
  */
 export interface TrackedSession {
     /**
@@ -136,7 +152,9 @@ export interface TrackedSession {
 }
 
 /**
+
  * Extracts an issue key (e.g. AG-123) from free text.
+
  */
 export type AgKeyExtractor = (
     text: string | null | undefined,

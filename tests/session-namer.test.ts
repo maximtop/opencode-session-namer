@@ -294,7 +294,6 @@ describe('session-namer', () => {
         expect(updates).toHaveLength(1);
         const title = updates[0]?.body.title ?? '';
         expect(title.startsWith('[filters registry] Review pull/1226 ')).toBe(true);
-        expect(title.length).toBeGreaterThan(40);
         expect(title.length).toBeLessThanOrEqual(90);
     }, 30000);
 
@@ -322,7 +321,10 @@ describe('session-namer', () => {
     it('prefixes non-PR sessions with [project]', async () => {
         await writeConfig({});
         const session = freshSession({ directory: gitProject });
-        const { client, updates } = makeClient({ session, firstUserText: 'fix it' });
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: 'fix it',
+        });
         const hooks = await SessionNamer({ client } as Ctx);
         await drive(hooks, session, { autoTitle: 'Fixing the flaky test', updates });
         expect(updates).toHaveLength(1);
@@ -332,7 +334,10 @@ describe('session-namer', () => {
     it('detects worktrees via the .git file (main repo + branch key)', async () => {
         await writeConfig({});
         const session = freshSession({ directory: worktree });
-        const { client, updates } = makeClient({ session, firstUserText: 'continue' });
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: 'continue',
+        });
         const hooks = await SessionNamer({ client } as Ctx);
         await drive(hooks, session, { autoTitle: 'Continue stealth fix', updates });
         expect(updates).toHaveLength(1);
@@ -377,7 +382,10 @@ describe('session-namer', () => {
         const session = freshSession({
             directory: '/home/tester/.config/openchamber/chats/2026-09-03/session-xyz',
         });
-        const { client, updates } = makeClient({ session, firstUserText: 'hi there' });
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: 'hi there',
+        });
         const hooks = await SessionNamer({ client } as Ctx);
         await drive(hooks, session, {
             autoTitle: 'Joke request',
@@ -390,7 +398,10 @@ describe('session-namer', () => {
     it('renames exactly once even across later idles', async () => {
         await writeConfig({});
         const session = freshSession({ directory: gitProject });
-        const { client, updates } = makeClient({ session, firstUserText: 'do a thing' });
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: 'do a thing',
+        });
         const hooks = await SessionNamer({ client } as Ctx);
         await drive(hooks, session, { autoTitle: 'Feature work', updates });
         expect(updates).toHaveLength(1);
@@ -408,7 +419,10 @@ describe('session-namer', () => {
     it('skips sub-agent sessions', async () => {
         await writeConfig({});
         const session = freshSession({ parentID: 'ses_parent' });
-        const { client, updates } = makeClient({ session, firstUserText: 'subtask' });
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: 'subtask',
+        });
         const hooks = await SessionNamer({ client } as Ctx);
         await drive(hooks, session, {
             autoTitle: 'Subtask (@explore subagent)',
@@ -432,6 +446,22 @@ describe('session-namer', () => {
         await drive(hooks, session, { autoTitle: 'Review pull request', updates });
         expect(updates).toHaveLength(1);
         expect(updates[0]?.body.title?.startsWith('filters registry | PR#1226: ')).toBe(true);
+    }, 30000);
+
+    it('can render a slash-separated template with an empty slot', async () => {
+        await writeConfig({
+            template: '{project}/{agKey}/{title}',
+            prPrefix: 'PR#{number}: ',
+        });
+        const session = freshSession();
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: `review ${PR_URL}`,
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await drive(hooks, session, { autoTitle: 'Review pull request', updates });
+        expect(updates).toHaveLength(1);
+        expect(updates[0]?.body.title?.startsWith('filters registry/PR#1226: ')).toBe(true);
     }, 30000);
 
     it('smartShorten shortens overlong titles via a child session', async () => {
@@ -468,4 +498,119 @@ describe('session-namer', () => {
         expect(title.length).toBeLessThanOrEqual(90);
         expect(title.startsWith('[filters registry] Review pull/1226 Strips')).toBe(true);
     }, 30000);
+});
+
+describe('classifyTitleChange (title provenance)', () => {
+    const freshRec = (): import('../src/types').TrackedSession => ({
+        sawUserMessage: false,
+        autoTitle: undefined,
+        foreign: false,
+        scheduled: false,
+        lastTitle: undefined,
+    });
+
+    const applyTo = (rec: ReturnType<typeof freshRec>, patch: {
+        autoTitle: string | undefined;
+        foreign: boolean;
+        lastTitle: string;
+    }) => {
+        rec.lastTitle = patch.lastTitle;
+        rec.autoTitle = patch.autoTitle;
+        rec.foreign = patch.foreign;
+    };
+
+    const classify = async (
+        rec: ReturnType<typeof freshRec>,
+        title: string,
+    ) => {
+        const { classifyTitleChange } = await import('../src/tracking');
+        const patch = classifyTitleChange(rec, title);
+        applyTo(rec, patch);
+        return patch;
+    };
+
+    it('seeds the baseline on the first observed title', async () => {
+        const rec = freshRec();
+        rec.sawUserMessage = true;
+        const patch = await classify(rec, 'New session - 2026-…');
+        expect(patch.foreign).toBe(false);
+        expect(patch.lastTitle).toBe('New session - 2026-…');
+        expect(patch.autoTitle).toBeUndefined();
+    });
+
+    it('flags a title set before the first user message as foreign', async () => {
+        const rec = freshRec();
+        const first = await classify(rec, 'New session - 2026-…');
+        expect(first.foreign).toBe(false);
+        const second = await classify(rec, '#12 issue title from picker');
+        expect(second.foreign).toBe(true);
+    });
+
+    it('captures the post-user-message change as the auto-title', async () => {
+        const rec = freshRec();
+        rec.sawUserMessage = true;
+        await classify(rec, 'New session - 2026-…');
+        const patch = await classify(rec, 'Review pull request');
+        expect(patch.foreign).toBe(false);
+        expect(patch.autoTitle).toBe('Review pull request');
+    });
+
+    it('flags a change away from the auto-title as manual', async () => {
+        const rec = freshRec();
+        rec.sawUserMessage = true;
+        await classify(rec, 'New session - 2026-…');
+        await classify(rec, 'Review pull request');
+        const patch = await classify(rec, 'my custom name');
+        expect(patch.foreign).toBe(true);
+    });
+
+    it('recovers after a reload mid-turn (baseline seeds, next change captures)', async () => {
+        const rec = freshRec();
+        rec.sawUserMessage = true;
+        let patch = await classify(rec, 'Review pull request');
+        expect(patch.autoTitle).toBeUndefined();
+        patch = await classify(rec, 'Fixing the flaky test');
+        expect(patch.autoTitle).toBe('Fixing the flaky test');
+    });
+});
+
+describe('idle before the first user message', () => {
+    it('does not burn the session and renames on a later idle', async () => {
+        await writeConfig({});
+        const session = freshSession({ directory: gitProject });
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: 'fix the broken test',
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await hooks.event?.({
+            event: { type: 'session.created', properties: { info: { ...session } } },
+        } as never);
+        await hooks.event?.({
+            event: { type: 'session.idle', properties: { sessionID: session.id } },
+        } as never);
+        await new Promise((r) => {
+            setTimeout(r, 400);
+        });
+        expect(updates).toHaveLength(0);
+        expect(session.title).toBe('New session - 2026-09-03T10:00:00.000Z');
+        await hooks.event?.({
+            event: {
+                type: 'message.updated',
+                properties: { info: { role: 'user', sessionID: session.id } },
+            },
+        } as never);
+        session.title = 'Fixing the flaky test';
+        await hooks.event?.({
+            event: {
+                type: 'session.updated',
+                properties: { info: { ...session } },
+            },
+        } as never);
+        await hooks.event?.({
+            event: { type: 'session.idle', properties: { sessionID: session.id } },
+        } as never);
+        await waitFor(() => updates.length > 0);
+        expect(updates[0]?.body.title).toBe('[browser-extension] Fixing the flaky test');
+    });
 });

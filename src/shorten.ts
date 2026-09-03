@@ -1,3 +1,4 @@
+import { newestText } from './messages';
 import { truncateAtWord } from './text';
 import type { PluginClient, PluginConfig } from './types';
 
@@ -40,6 +41,17 @@ async function resolveModel(
         return undefined;
     }
     return { providerID, modelID };
+}
+
+/**
+ * Caps the reply at budget: a compliant reply is kept, an over-long one is
+ * word-truncated so the final title never exceeds maxLength.
+ * @param reply model reply
+ * @param budget maximum length
+ * @returns reply within budget
+ */
+function shortEnough(reply: string, budget: number): string {
+    return reply.length > budget ? truncateAtWord(reply, budget) : reply;
 }
 
 /**
@@ -99,30 +111,14 @@ export function createSmartShorten(
                 path: { id: childID },
                 query: { directory },
             });
-            const assistants = (msgs.data ?? [])
-                .filter((m) => m.info?.role === 'assistant')
-                .sort(
-                    (a, b) => (b.info.time?.created ?? 0)
-                        - (a.info.time?.created ?? 0),
-                );
-            let shortened: string | undefined;
-            for (const message of assistants) {
-                for (const part of message.parts ?? []) {
-                    if (part.type === 'text' && part.text.trim()) {
-                        shortened = part.text.trim().split('\n')[0]?.trim();
-                        break;
-                    }
-                }
-                if (shortened) {
-                    break;
-                }
-            }
+            const shortened = newestText(
+                msgs.data ?? [],
+                'assistant',
+            )?.split('\n')[0]?.trim();
             if (!shortened) {
                 throw new Error('empty shorten reply');
             }
-            return shortened.length > budget + 10
-                ? truncateAtWord(shortened, budget)
-                : shortened;
+            return shortEnough(shortened, budget);
         } finally {
             await client.session
                 .delete({ path: { id: childID }, query: { directory } })

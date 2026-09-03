@@ -38,6 +38,8 @@ The plugin is deterministic by default (no LLM calls). An optional
 │   ├── github.ts              # gh CLI PR info lookup
 │   ├── config.ts              # user config loading
 │   ├── state.ts               # rename-once state file
+│   ├── tracking.ts             # title-provenance state machine (pure)
+│   ├── messages.ts             # newest-message text part helper
 │   ├── text.ts                # template/humanize/truncate helpers
 │   └── types.ts               # shared types
 ├── tests/session-namer.test.ts  # vitest suite with a mock opencode client

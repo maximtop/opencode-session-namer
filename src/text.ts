@@ -13,7 +13,8 @@ export function humanize(name: string): string {
 }
 
 /**
- * Cuts text at the last word boundary before `max` characters.
+ * Cuts text to `max` characters, preferring the last word boundary in the
+ * second half of the window; hard-cuts mid-word when no such boundary exists.
  * @param text text to cut
  * @param max maximum length
  * @returns cut text
@@ -29,8 +30,35 @@ export function truncateAtWord(text: string, max: number): string {
 }
 
 /**
- * Substitutes {slot} placeholders. Separators left dangling by an empty
- * slot (e.g. "|" in "{project} | {agKey} | {title}") are cleaned up.
+ * Substsitutes {slot} placeholders without any normalization: separators and
+ * whitespace stay exactly as written. Used where the surrounding text must
+ * keep its exact spacing (e.g. prPrefix' trailing space).
+ * @param template template string with {slot} placeholders
+ * @param slots slot values; unknown slots render empty
+ * @returns rendered string
+ */
+export function expandSlots(
+    template: string,
+    slots: Record<string, string>,
+): string {
+    const pieces = template.split(/\{(\w+)\}/);
+    let out = pieces[0] ?? '';
+    const slotCount = Math.floor(pieces.length / 2);
+    for (let k = 0; k < slotCount; k += 1) {
+        const key = pieces[2 * k + 1];
+        const value = key !== undefined ? (slots[key] ?? '') : '';
+        if (value) {
+            out += value + (pieces[2 * k + 2] ?? '');
+        }
+    }
+    return out;
+}
+
+/**
+ * Substitutes {slot} placeholders. A slot renders together with the
+ * separator that follows it, so an empty slot drops exactly one separator
+ * ("{a}|{b}|{c}" with an empty b renders as "a|c"). Result is whitespace-
+ * normalized and trimmed.
  * @param template template string with {slot} placeholders
  * @param slots slot values; empty slots collapse
  * @returns rendered string
@@ -39,12 +67,7 @@ export function applyTemplate(
     template: string,
     slots: Record<string, string>,
 ): string {
-    return template
-        .replace(/\{(\w+)\}/g, (_, key: string) => slots[key] ?? '')
-        .replace(/\s*([|—–·•/-])\s*(?=[|—–·•/-])/g, ' ')
-        .replace(/\s+/g, ' ')
-        .replace(/\s*[|—–·•/-]\s*$/g, '')
-        .trim();
+    return expandSlots(template, slots).replace(/\s+/g, ' ').trim();
 }
 
 /**

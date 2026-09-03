@@ -1,8 +1,15 @@
 import { findPrUrl } from './pr-link';
 import { fetchGhPrInfo } from './github';
+import { newestText } from './messages';
 import { projectForDirectory } from './project';
 import { createSmartShorten } from './shorten';
-import { applyTemplate, deriveBase, humanize, truncateAtWord } from './text';
+import {
+    applyTemplate,
+    deriveBase,
+    expandSlots,
+    humanize,
+    truncateAtWord,
+} from './text';
 import type {
     AgKeyExtractor,
     LogFn,
@@ -48,6 +55,10 @@ interface RenamerDeps {
      * Marks a session as processed and persists the state file.
      */
     markProcessed: (id: string) => Promise<void>;
+    /**
+     * Releases the scheduled latch so a later idle can retry.
+     */
+    releaseScheduled: (id: string) => void;
 }
 
 /**
@@ -84,47 +95,14 @@ interface ComposeInput {
  * Wires the rename orchestration: reads the session, decides the new title
  * (PR-based or project-based) and writes it once.
  * @param deps plugin dependencies
- * @returns rename function
+ * @returns rename function that reports whether the outcome is terminal
  */
 export function createRenamer(deps: RenamerDeps) {
     const {
         client, config, extractAgKey, log, state, tracked, markProcessed,
+        releaseScheduled,
     } = deps;
     const smartShorten = createSmartShorten(client, config);
-
-    /**
-     * Returns the text of the first real (non-synthetic) user message.
-     * @param sessionID session to read
-     * @param directory session working directory
-     * @returns message text or null
-     */
-    async function firstUserText(
-        sessionID: string,
-        directory: string,
-    ): Promise<string | null> {
-        const res = await client.session.messages({
-            path: { id: sessionID },
-            query: { directory, limit: 50 },
-        });
-        const users = (res.data ?? [])
-            .filter((m) => m.info?.role === 'user')
-            .sort(
-                (a, b) => (a.info.time?.created ?? 0)
-                    - (b.info.time?.created ?? 0),
-            );
-        for (const message of users) {
-            const texts: string[] = [];
-            for (const part of message.parts ?? []) {
-                if (part.type === 'text' && !part.synthetic && part.text.trim()) {
-                    texts.push(part.text);
-                }
-            }
-            if (texts.length > 0) {
-                return texts.join('\n');
-            }
-        }
-        return null;
-    }
 
     /**
      * Composes the final title. When it exceeds maxLength, only the
@@ -167,6 +145,7 @@ export function createRenamer(deps: RenamerDeps) {
                 );
             } catch (e) {
                 log('warn', 'smartShorten failed, falling back', {
+                    sessionID,
                     error: String(e),
                 });
             }
@@ -191,15 +170,7 @@ export function createRenamer(deps: RenamerDeps) {
         directory: string,
     ): Promise<string> {
         const project = humanize(pr.repo);
-        let info: PrInfo | null = null;
-        try {
-            info = await fetchGhPrInfo(pr);
-        } catch (e) {
-            log('warn', 'PR fetch failed, naming from URL only', {
-                sessionID,
-                error: String(e),
-            });
-        }
+        const info: PrInfo | null = await fetchGhPrInfo(pr, log);
         const agKey = extractAgKey(info?.branch)
             ?? extractAgKey(info?.title);
         // PR titles often start with the issue key ("AG-31699: Add …") —
@@ -207,15 +178,11 @@ export function createRenamer(deps: RenamerDeps) {
         const title = info?.title && agKey
             ? info.title.replace(new RegExp(`^${agKey}[:\\s-]*`), '')
             : info?.title ?? null;
-        // prPrefix keeps its trailing space: expand slots without trim.
-        const prefix = config.prPrefix.replace(
-            /\{(\w+)\}/g,
-            (_, key: string) => ({ number: pr.number })[key] ?? '',
-        );
+        const prefix = expandSlots(config.prPrefix, { number: pr.number });
         return composeTitle({
             project,
             agKey,
-            keepPrefix: title ? prefix : prefix.trimEnd(),
+            keepPrefix: prefix,
             desc: title ?? '',
             sessionID,
             directory,
@@ -223,30 +190,49 @@ export function createRenamer(deps: RenamerDeps) {
     }
 
     /**
+     * Removes C0/C1 control characters so externally sourced titles cannot
+     * inject terminal control sequences.
+     * @param input title under construction
+     * @returns sanitized title
+     */
+    function sanitize(input: string): string {
+        return Array.from(input)
+            .filter((ch) => {
+                const code = ch.charCodeAt(0);
+                const printable = code < 128 || code >= 160;
+                return code >= 32 && code !== 127 && printable;
+            })
+            .join('');
+    }
+
+    /**
      * Renames the session if it is eligible: not processed yet, not foreign,
      * not a sub-agent session, and the current title is either default or
      * the recorded auto-title.
      * @param sessionID session to rename
+     * @returns true when the outcome is terminal, false to retry later
      */
-    return async function rename(sessionID: string): Promise<void> {
+    return async function rename(sessionID: string): Promise<boolean> {
         if (state.processed[sessionID]) {
-            return;
+            return true;
         }
         const rec = tracked.get(sessionID);
         if (rec?.foreign) {
             await markProcessed(sessionID);
-            return;
+            return true;
         }
 
         const got = await client.session.get({ path: { id: sessionID } });
         const session = got.data;
         if (!session) {
-            return; // transient — try again on a later idle
+            // transient — try again on a later idle
+            releaseScheduled(sessionID);
+            return false;
         }
         if (session.parentID) {
             // subagent sessions name themselves
             await markProcessed(sessionID);
-            return;
+            return true;
         }
 
         const isDefault = DEFAULT_TITLE_RE.test(session.title);
@@ -257,14 +243,20 @@ export function createRenamer(deps: RenamerDeps) {
                 && session.title === rec.autoTitle;
             if (!isAutoTitle) {
                 await markProcessed(sessionID);
-                return;
+                return true;
             }
         }
 
-        const text = await firstUserText(sessionID, session.directory);
+        const messages = await client.session.messages({
+            path: { id: sessionID },
+            query: { directory: session.directory, limit: 50 },
+        });
+        const text = newestText(messages.data ?? [], 'user');
         if (!text) {
-            await markProcessed(sessionID);
-            return;
+            // no user message yet (idle before the first message) — do not
+            // burn the session; a later idle will retry
+            releaseScheduled(sessionID);
+            return false;
         }
 
         let title: string | null = null;
@@ -292,14 +284,16 @@ export function createRenamer(deps: RenamerDeps) {
             }
         }
 
-        if (title && title !== session.title) {
+        const safe = title ? sanitize(title) : null;
+        if (safe && safe !== session.title) {
             await client.session.update({
                 path: { id: sessionID },
                 query: { directory: session.directory },
-                body: { title },
+                body: { title: safe },
             });
-            log('info', 'renamed session', { sessionID, title });
+            log('info', 'renamed session', { sessionID, title: safe });
         }
         await markProcessed(sessionID);
+        return true;
     };
 }
