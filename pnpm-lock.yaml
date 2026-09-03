@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      zod:
+        specifier: 4.1.8
+        version: 4.1.8
     devDependencies:
       '@opencode-ai/plugin':
         specifier: ^1.18.27

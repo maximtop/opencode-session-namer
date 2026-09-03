@@ -19,40 +19,11 @@ export type LogFn = (
 ) => void;
 
 /**
-
  * Effective plugin configuration (user file merged over the defaults).
-
+ * Inferred from the zod validation schema in `config.ts` so the shape and
+ * its coercion rules live in one place.
  */
-export interface PluginConfig {
-    /**
-     * Name shape with {project} {agKey} {title} slots; empty slots collapse.
-     */
-    template: string;
-    /**
-     * Prepended to {title} for PR sessions; {number} is the PR number.
-     */
-    prPrefix: string;
-    /**
-     * Regex for the issue key; an optional capture group selects the key.
-     */
-    agKeyPattern: string;
-    /**
-     * Titles longer than this get shortened.
-     */
-    maxLength: number;
-    /**
-     * Shorten overlong titles with an LLM instead of a hard word-cut.
-     */
-    smartShorten: boolean;
-    /**
-     * "provider/model" for shortening; defaults to opencode small_model.
-     */
-    smartShortenModel: string | null;
-    /**
-     * Delay after the first idle before renaming.
-     */
-    renameDelayMs: number;
-}
+export type { PluginConfig } from './config';
 
 /**
 

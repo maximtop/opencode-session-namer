@@ -1,59 +1,54 @@
 import { promises as fsp } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import type { PluginConfig } from './types';
+import { z } from 'zod';
 
 const CONFIG_FILE = process.env.SESSION_NAMER_CONFIG
     ?? join(homedir(), '.config', 'opencode', 'session-namer.json');
 
-const DEFAULTS: PluginConfig = {
+const DEFAULTS = {
     template: '[{project}] {agKey} {title}',
     prPrefix: 'Review pull/{number} ',
     agKeyPattern: '[A-Z][A-Z0-9]{1,9}-\\d+',
     maxLength: 90,
     smartShorten: false,
-    smartShortenModel: null,
+    smartShortenModel: null as string | null,
     renameDelayMs: 10000,
 };
 
-const NUMBER_KEYS = ['maxLength', 'renameDelayMs'];
-const BOOL_KEYS = ['smartShorten'];
-const STRING_KEYS = ['template', 'prPrefix', 'agKeyPattern', 'smartShortenModel'];
+/**
+ * A positive-integer config field that also accepts a numeric string.
+ * Anything else — booleans, null, objects, out-of-range values — falls back
+ * to `fallback`, so a single mistyped key never breaks the whole config.
+ * @param fallback default used when the raw value is unusable
+ * @returns schema that always yields a positive integer
+ */
+function positiveInt(fallback: number) {
+    return z
+        .preprocess(
+            (value) => (typeof value === 'number' || typeof value === 'string'
+                ? value
+                : Number.NaN),
+            z.coerce.number().int().positive(),
+        )
+        .catch(fallback);
+}
+
+const ConfigSchema = z.object({
+    template: z.string().catch(DEFAULTS.template),
+    prPrefix: z.string().catch(DEFAULTS.prPrefix),
+    agKeyPattern: z.string().catch(DEFAULTS.agKeyPattern),
+    maxLength: positiveInt(DEFAULTS.maxLength),
+    smartShorten: z.boolean().catch(DEFAULTS.smartShorten),
+    smartShortenModel: z.string().nullable().catch(DEFAULTS.smartShortenModel),
+    renameDelayMs: positiveInt(DEFAULTS.renameDelayMs),
+});
 
 /**
- * Normalizes one raw config value against the known key set: unknown keys
- * are dropped, mistyped values fall back to the default per key.
- * @param key config key
- * @param value raw value from the user file
- * @returns coerced value or undefined for unknown keys
+ * Effective plugin configuration (user file merged over the defaults),
+ * inferred from the validation schema so the shape lives in one place.
  */
-function coerceValue(key: string, value: unknown): unknown {
-    if (NUMBER_KEYS.includes(key)) {
-        if (typeof value === 'boolean') {
-            return DEFAULTS[key as keyof PluginConfig];
-        }
-        let num = NaN;
-        if (typeof value === 'number') {
-            num = value;
-        } else if (typeof value === 'string') {
-            num = Number(value);
-        }
-        return Number.isInteger(num) && num > 0
-            ? num
-            : DEFAULTS[key as keyof PluginConfig];
-    }
-    if (BOOL_KEYS.includes(key)) {
-        return typeof value === 'boolean'
-            ? value
-            : DEFAULTS[key as keyof PluginConfig];
-    }
-    if (STRING_KEYS.includes(key)) {
-        return typeof value === 'string'
-            ? value
-            : DEFAULTS[key as keyof PluginConfig];
-    }
-    return undefined;
-}
+export type PluginConfig = z.infer<typeof ConfigSchema>;
 
 /**
  * Applies the SESSION_NAMER_DELAY_MS env override (non-negative number,
@@ -79,21 +74,14 @@ function applyEnvOverride(config: PluginConfig): PluginConfig {
  * @returns effective plugin config
  */
 export async function loadConfig(): Promise<PluginConfig> {
-    let raw: Record<string, unknown> = {};
+    let raw: unknown;
     try {
-        const parsed = JSON.parse(await fsp.readFile(CONFIG_FILE, 'utf8'));
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-            raw = parsed as Record<string, unknown>;
-        }
+        raw = JSON.parse(await fsp.readFile(CONFIG_FILE, 'utf8'));
     } catch {
-        // broken file means defaults
+        raw = {};
     }
-    const config = { ...DEFAULTS };
-    for (const [key, value] of Object.entries(raw)) {
-        const coerced = coerceValue(key, value);
-        if (coerced !== undefined) {
-            (config as unknown as Record<string, unknown>)[key] = coerced;
-        }
-    }
-    return applyEnvOverride(config);
+    const obj = raw && typeof raw === 'object' && !Array.isArray(raw)
+        ? raw
+        : {};
+    return applyEnvOverride(ConfigSchema.parse(obj));
 }

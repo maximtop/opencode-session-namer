@@ -37,5 +37,8 @@
     "eslint-plugin-jsdoc": "^60.6.0",
     "typescript": "^5.8.3",
     "vitest": "^4.0.6"
+  },
+  "dependencies": {
+    "zod": "4.1.8"
   }
 }

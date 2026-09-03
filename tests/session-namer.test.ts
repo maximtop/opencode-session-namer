@@ -8,6 +8,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect, beforeAll } from 'vitest';
 import type { Plugin } from '@opencode-ai/plugin';
+import type { PluginConfig } from '../src/config';
 
 const tmp = await fsp.mkdtemp(join(tmpdir(), 'session-namer-test-'));
 process.env.SESSION_NAMER_DELAY_MS = '30';
@@ -777,5 +778,71 @@ describe('fast message-triggered rename', () => {
         });
         expect(updates).toHaveLength(2);
         expect(session.title).toBe('manual rename after idle');
+    });
+});
+
+describe('loadConfig (zod coercion)', () => {
+    // Imported lazily (after the top-level beforeAll has loaded config.ts
+    // against the tmp SESSION_NAMER_CONFIG) so the module-level CONFIG_FILE
+    // resolves to the test file, not the real user config.
+    let loadConfig: () => Promise<PluginConfig>;
+    beforeAll(async () => {
+        loadConfig = (await import('../src/config')).loadConfig;
+    });
+
+    it('fills defaults for a missing/empty config', async () => {
+        await writeConfig({});
+        const cfg = await loadConfig();
+        expect(cfg.template).toBe('[{project}] {agKey} {title}');
+        expect(cfg.maxLength).toBe(90);
+        expect(cfg.smartShorten).toBe(false);
+        expect(cfg.smartShortenModel).toBeNull();
+    });
+
+    it('falls back per key on wrong types and coerces numeric strings', async () => {
+        await writeConfig({
+            template: 5,
+            smartShorten: 'yes',
+            smartShortenModel: 'tokenguard/deepseek-v4-flash',
+            maxLength: '42',
+            unknownKey: 'x',
+        });
+        const cfg = await loadConfig();
+        expect(cfg.template).toBe('[{project}] {agKey} {title}');
+        expect(cfg.smartShorten).toBe(false);
+        expect(cfg.smartShortenModel).toBe('tokenguard/deepseek-v4-flash');
+        expect(cfg.maxLength).toBe(42);
+        expect(cfg).not.toHaveProperty('unknownKey');
+    });
+
+    it('rejects booleans, floats, zero and negatives for numeric fields', async () => {
+        for (const bad of [true, 3.5, 0, -10, null]) {
+            await writeConfig({ maxLength: bad });
+            // eslint-disable-next-line no-await-in-loop
+            expect((await loadConfig()).maxLength).toBe(90);
+        }
+    });
+
+    it('treats a broken config file as defaults', async () => {
+        await fsp.writeFile(
+            process.env.SESSION_NAMER_CONFIG as string,
+            '{not json',
+        );
+        const cfg = await loadConfig();
+        expect(cfg.template).toBe('[{project}] {agKey} {title}');
+        expect(cfg.renameDelayMs).toBe(30);
+    });
+
+    it('coerces renameDelayMs from the file when no env override', async () => {
+        const saved = process.env.SESSION_NAMER_DELAY_MS;
+        delete process.env.SESSION_NAMER_DELAY_MS;
+        try {
+            await writeConfig({ renameDelayMs: '5' });
+            expect((await loadConfig()).renameDelayMs).toBe(5);
+            await writeConfig({ renameDelayMs: false });
+            expect((await loadConfig()).renameDelayMs).toBe(10000);
+        } finally {
+            process.env.SESSION_NAMER_DELAY_MS = saved;
+        }
     });
 });
