@@ -66,9 +66,19 @@ module.exports = {
                 ...customRules,
                 indent: 'off',
                 '@typescript-eslint/indent': ['error', 4, { SwitchCase: 1 }],
+                'jsdoc/require-jsdoc': ['error', {
+                    contexts: [
+                        'FunctionDeclaration',
+                        'MethodDefinition',
+                        'TSInterfaceDeclaration',
+                        'TSTypeAliasDeclaration',
+                    ],
+                }],
             },
         },
         {
+            // src uses named interfaces, so property docs are enforceable;
+            // tests have anonymous inline object types where they are not.
             files: ['src/**/*.ts'],
             rules: {
                 'jsdoc/require-jsdoc': ['error', {
@@ -85,7 +95,6 @@ module.exports = {
         {
             files: ['tests/**/*.ts'],
             rules: {
-                'jsdoc/require-jsdoc': 'off',
                 'jsdoc/require-param': 'off',
                 'jsdoc/require-returns': 'off',
                 'no-param-reassign': 'off',

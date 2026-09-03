@@ -14,8 +14,17 @@ process.env.SESSION_NAMER_DELAY_MS = '30';
 process.env.SESSION_NAMER_CONFIG = join(tmp, 'config.json');
 process.env.SESSION_NAMER_STATE = join(tmp, 'state.json');
 
+/**
+ * The hooks object returned by the plugin factory.
+ */
 type Hooks = NonNullable<Awaited<ReturnType<Plugin>>>;
+/**
+ * The plugin context type (used to type the mocked context).
+ */
 type Ctx = Parameters<Plugin>[0];
+/**
+ * The SDK client type the plugin receives.
+ */
 type PluginClient = Ctx['client'];
 
 let SessionNamer: Plugin;
@@ -40,13 +49,33 @@ beforeAll(async () => {
     SessionNamer = plugin.SessionNamer;
 });
 
+/**
+ * Minimal session object for the mock client.
+ */
 interface FakeSession {
+    /**
+     * Session id.
+     */
     id: string;
+    /**
+     * Current session title; mutated by the mocked session.update.
+     */
     title: string;
+    /**
+     * Session working directory.
+     */
     directory: string;
+    /**
+     * Parent id for sub-agent sessions.
+     */
     parentID?: string;
 }
 
+/**
+ * Builds a fresh fake session with a default ("New session") title.
+ * @param over field overrides
+ * @returns fake session
+ */
 function freshSession(over: Partial<FakeSession> = {}): FakeSession {
     return {
         id: `ses_${Math.random().toString(36).slice(2, 10)}`,
@@ -56,13 +85,33 @@ function freshSession(over: Partial<FakeSession> = {}): FakeSession {
     };
 }
 
+/**
+ * Inputs for the mock client.
+ */
 interface MockOptions {
+    /**
+     * Session the mock serves.
+     */
     session: FakeSession;
+    /**
+     * Text of the first user message.
+     */
     firstUserText: string;
+    /**
+     * Canned assistant reply for the smartShorten child session.
+     */
     shortenReply?: string;
+    /**
+     * Make session.create throw to simulate smartShorten failure.
+     */
     failCreate?: boolean;
 }
 
+/**
+ * Builds a mock opencode SDK client and its spies.
+ * @param options mock inputs
+ * @returns mock client, captured title updates, child-session call counters
+ */
 function makeClient(options: MockOptions) {
     const { session, firstUserText, shortenReply, failCreate } = options;
     const updates: Array<{ body: { title?: string } }> = [];
@@ -124,13 +173,34 @@ function makeClient(options: MockOptions) {
     return { client: client as unknown as PluginClient, updates, childCalls };
 }
 
+/**
+ * Options for the scenario driver.
+ */
 interface DriveOptions {
+    /**
+     * Simulate the built-in auto-title landing after the first message.
+     */
     autoTitle?: string;
+    /**
+     * Simulate a manual rename after the auto-title.
+     */
     foreignTitle?: string;
+    /**
+     * Captured session.update calls from the mock client.
+     */
     updates: Array<{ body: { title?: string } }>;
+    /**
+     * Wait for a rename (true) or settle a fixed time (false).
+     */
     expectUpdate?: boolean;
 }
 
+/**
+ * Polls a condition until it holds or the timeout elapses.
+ * @param cond condition to poll
+ * @param timeoutMs polling timeout
+ * @returns whether the condition held before the timeout
+ */
 async function waitFor(
     cond: () => boolean,
     timeoutMs = 20000,
@@ -147,6 +217,14 @@ async function waitFor(
     return cond();
 }
 
+/**
+ * Drives a full first-turn scenario through the plugin event hook: session
+ * created, first user message, optional auto-title, optional manual rename,
+ * then idle — and waits for the rename to settle.
+ * @param hooks plugin hooks under test
+ * @param session fake session
+ * @param options scenario options
+ */
 async function drive(
     hooks: Hooks,
     session: FakeSession,
@@ -190,6 +268,10 @@ async function drive(
     });
 }
 
+/**
+ * Writes the plugin config file the next factory call will read.
+ * @param cfg config overrides (empty object means defaults)
+ */
 async function writeConfig(cfg: Record<string, unknown>): Promise<void> {
     await fsp.writeFile(
         process.env.SESSION_NAMER_CONFIG as string,
