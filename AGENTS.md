@@ -29,7 +29,17 @@ The plugin is deterministic by default (no LLM calls). An optional
 
 ```text
 .
-├── src/index.ts               # the plugin (SessionNamer export)
+├── src/
+│   ├── index.ts               # plugin entry: tracking + event hook
+│   ├── rename.ts              # rename orchestration
+│   ├── shorten.ts             # smartShorten via a throwaway child session
+│   ├── project.ts             # directory/worktree → project label
+│   ├── pr-link.ts             # PR link extraction from the first message
+│   ├── github.ts              # gh CLI PR info lookup
+│   ├── config.ts              # user config loading
+│   ├── state.ts               # rename-once state file
+│   ├── text.ts                # template/humanize/truncate helpers
+│   └── types.ts               # shared types
 ├── tests/session-namer.test.ts  # vitest suite with a mock opencode client
 ├── package.json               # scripts and dev dependencies
 ├── tsconfig.json              # strict TS, noEmit
