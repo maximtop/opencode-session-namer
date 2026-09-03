@@ -13,6 +13,7 @@ const DEFAULTS = {
     maxLength: 90,
     smartShorten: false,
     smartShortenModel: null as string | null,
+    prLinkLlm: false,
     renameDelayMs: 10000,
 };
 
@@ -41,6 +42,7 @@ const ConfigSchema = z.object({
     maxLength: positiveInt(DEFAULTS.maxLength),
     smartShorten: z.boolean().catch(DEFAULTS.smartShorten),
     smartShortenModel: z.string().nullable().catch(DEFAULTS.smartShortenModel),
+    prLinkLlm: z.boolean().catch(DEFAULTS.prLinkLlm),
     renameDelayMs: positiveInt(DEFAULTS.renameDelayMs),
 });
 

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, it, expect, beforeAll } from 'vitest';
 import type { Plugin } from '@opencode-ai/plugin';
 import type { PluginConfig } from '../src/config';
+import { findPrUrl } from '../src/pr-link';
 
 const tmp = await fsp.mkdtemp(join(tmpdir(), 'session-namer-test-'));
 process.env.SESSION_NAMER_DELAY_MS = '30';
@@ -844,5 +845,109 @@ describe('loadConfig (zod coercion)', () => {
         } finally {
             process.env.SESSION_NAMER_DELAY_MS = saved;
         }
+    });
+
+    it('coerces prLinkLlm (boolean only)', async () => {
+        await writeConfig({});
+        expect((await loadConfig()).prLinkLlm).toBe(false);
+        await writeConfig({ prLinkLlm: 'yes' });
+        expect((await loadConfig()).prLinkLlm).toBe(false);
+        await writeConfig({ prLinkLlm: true });
+        expect((await loadConfig()).prLinkLlm).toBe(true);
+    });
+});
+
+describe('findPrUrl (PR-link extraction)', () => {
+    it('matches a bare pull URL and tolerates path/query/fragment suffixes', () => {
+        const pr = {
+            host: 'https://github.com',
+            owner: 'AdGuardSoftwareLimited',
+            repo: 'vpn-extension',
+            number: '5',
+        };
+        const base = 'https://github.com/AdGuardSoftwareLimited/vpn-extension/pull/5';
+        expect(findPrUrl(`review ${base}`)).toEqual(pr);
+        expect(findPrUrl(`review ${base}/changes`)).toEqual(pr);
+        expect(findPrUrl(`review ${base}/files`)).toEqual(pr);
+        expect(findPrUrl(`review ${base}#diff-abc123R95`)).toEqual(pr);
+        expect(findPrUrl(`review ${base}?foo=bar`)).toEqual(pr);
+        expect(findPrUrl(`review ${base}/`)).toEqual(pr);
+    });
+
+    it('finds the link deep inside a long expanded prompt (no head window)', () => {
+        const pad = 'filler text with no links. '.repeat(200);
+        const text = `${pad} https://github.com/o/r/pull/42 ${pad}`;
+        expect(findPrUrl(text)).toEqual({
+            host: 'https://github.com', owner: 'o', repo: 'r', number: '42',
+        });
+    });
+
+    it('matches the short owner/repo#N form and markdown inline links', () => {
+        expect(findPrUrl('see AdGuardSoftwareLimited/vpn-extension#5 please'))
+            .toEqual({
+                host: 'https://github.com',
+                owner: 'AdGuardSoftwareLimited',
+                repo: 'vpn-extension',
+                number: '5',
+            });
+        expect(findPrUrl('[the PR](https://github.com/o/r/pull/7) here'))
+            .toEqual({
+                host: 'https://github.com', owner: 'o', repo: 'r', number: '7',
+            });
+    });
+
+    it('returns null for no PR and for non-numeric placeholders', () => {
+        expect(findPrUrl('just refactor the code')).toBeNull();
+        expect(findPrUrl('placeholder OWNER/REPO#ID')).toBeNull();
+    });
+});
+
+describe('pr-link LLM fallback', () => {
+    it('extracts the PR via a child session when no URL-shaped link is present', async () => {
+        await writeConfig({ prLinkLlm: true });
+        const session = freshSession({ directory: gitProject });
+        const { client, updates, childCalls } = makeClient({
+            session,
+            firstUserText:
+                'please review the filters registry pull request one two two six',
+            shortenReply: PR_URL,
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await drive(hooks, session, { updates });
+        const title = updates[0]?.body.title ?? '';
+        expect(childCalls.created).toBeGreaterThan(0);
+        expect(title).toContain('[filters registry]');
+        expect(title).toContain('Review pull/1226');
+    });
+
+    it('ignores an unparseable LLM reply and names by project', async () => {
+        await writeConfig({ prLinkLlm: true });
+        const session = freshSession({ directory: gitProject });
+        const { client, updates, childCalls } = makeClient({
+            session,
+            firstUserText: 'refactor the parser pipeline',
+            shortenReply: 'I could not determine a specific pull request.',
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await drive(hooks, session, { updates });
+        const title = updates[0]?.body.title ?? '';
+        expect(childCalls.created).toBeGreaterThan(0);
+        expect(title).not.toContain('Review pull');
+        expect(title).toContain('[browser-extension]');
+    });
+
+    it('does not call the LLM when the regex already found the link', async () => {
+        await writeConfig({ prLinkLlm: true });
+        const session = freshSession({ directory: gitProject });
+        const { client, updates, childCalls } = makeClient({
+            session,
+            firstUserText: `review this: ${PR_URL}/changes`,
+            shortenReply: 'https://github.com/other/should-not-be-used/pull/1',
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await drive(hooks, session, { updates });
+        const title = updates[0]?.body.title ?? '';
+        expect(childCalls.created).toBe(0);
+        expect(title).toContain('Review pull/1226');
     });
 });

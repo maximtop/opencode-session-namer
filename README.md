@@ -11,7 +11,7 @@ An [opencode](https://opencode.ai) plugin that gives sessions meaningful names, 
 
 ## How it works
 
-- If the **first user message contains a GitHub pull request link**, the plugin fetches the PR title and branch via the [`gh`](https://cli.github.com) CLI and names the session after it: the repo, the PR number, the PR title. If the branch or title contains an issue key (e.g. `AG-123`), it is included. Only `github.com` hosts are accepted — a host from an untrusted message is never forwarded to `gh` (see Security).
+- If the **first user message references a GitHub pull request**, the plugin fetches the PR title and branch via the [`gh`](https://cli.github.com) CLI and names the session after it: the repo, the PR number, the PR title. If the branch or title contains an issue key (e.g. `AG-123`), it is included. The link is detected anywhere in the message — a full URL with any suffix (`…/pull/N/changes`, `#diff…`, `?…`) or the short `owner/repo#N` form. When no link-shaped text is found and `prLinkLlm` is on, a small model is asked which PR the message references. Only `github.com` hosts are accepted — a host from an untrusted message is never forwarded to `gh` (see Security).
 - Otherwise, for sessions inside a **git project**, the current auto-generated title gets a project prefix. Issue keys are picked up from the branch name. When the built-in title has not settled yet (session title still "New session"), the descriptive part is derived from the first line of the user message.
 - **Worktrees are detected generically**: a linked worktree has a `.git` *file* pointing into the main repo, so the project label is the main repo name and the issue key comes from the worktree branch — no configuration needed, works with any directory layout.
 - Sessions in scratch directories (temp dirs, OpenChamber chat workspaces) keep the plain auto-title.
@@ -57,6 +57,7 @@ All optional; create `~/.config/opencode/session-namer.json` to override:
 | `maxLength` | `90` | Titles longer than this get shortened. |
 | `smartShorten` | `false` | Shorten overlong titles with an LLM instead of a hard word-cut. |
 | `smartShortenModel` | `null` | `provider/model` for shortening; defaults to `small_model` from the opencode config. |
+| `prLinkLlm` | `false` | When no PR link is found in the first message, ask a small LLM (throwaway child session) which PR it references; the reply is validated before use. |
 | `renameDelayMs` | `10000` | Delay after the first user message (or first idle) before renaming. |
 
 ### Environment overrides

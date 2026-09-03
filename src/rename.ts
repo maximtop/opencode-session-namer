@@ -1,4 +1,5 @@
 import { findPrUrl } from './pr-link';
+import { createPrLinkExtractor } from './pr-link-llm';
 import { fetchGhPrInfo } from './github';
 import { messageText } from './messages';
 import { projectForDirectory } from './project';
@@ -105,6 +106,7 @@ export function createRenamer(deps: RenamerDeps) {
         releaseScheduled,
     } = deps;
     const smartShorten = createSmartShorten(client, config);
+    const extractPrLink = createPrLinkExtractor(client, config, log);
 
     /**
      * Composes the final title. When it exceeds maxLength, only the
@@ -262,7 +264,18 @@ export function createRenamer(deps: RenamerDeps) {
         }
 
         let title: string | null = null;
-        const pr = findPrUrl(text);
+        let pr = findPrUrl(text);
+        if (!pr && config.prLinkLlm) {
+            // no URL-shaped token — ask a small model which PR is referenced
+            try {
+                pr = await extractPrLink(text, sessionID, session.directory);
+            } catch (e) {
+                log('warn', 'pr-link llm extraction failed, naming by project', {
+                    sessionID,
+                    error: String(e),
+                });
+            }
+        }
         if (pr) {
             title = await prTitle(pr, sessionID, session.directory);
         } else {

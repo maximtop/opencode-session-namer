@@ -5,7 +5,7 @@ import type { PluginClient, PluginConfig } from './types';
 /**
  * A "provider/model" pair resolved to its two parts.
  */
-type ModelRef = {
+export type ModelRef = {
     /**
      * Provider id, e.g. "anthropic".
      */
@@ -23,7 +23,7 @@ type ModelRef = {
  * @param config plugin config
  * @returns model reference or undefined (server default then applies)
  */
-async function resolveModel(
+export async function resolveModel(
     client: PluginClient,
     config: PluginConfig,
 ): Promise<ModelRef | undefined> {
