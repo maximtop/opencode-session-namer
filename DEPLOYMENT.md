@@ -44,7 +44,7 @@ place; remove them too if the plugin should forget all processed sessions.
 ```jsonc
 // ~/.config/opencode/opencode.json
 {
-  "plugin": ["opencode-session-namer"]
+  "plugin": ["@maximtop/opencode-session-namer"]
 }
 ```
 

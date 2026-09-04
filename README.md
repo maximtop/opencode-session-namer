@@ -31,7 +31,7 @@ From npm (once published):
 ```jsonc
 // ~/.config/opencode/opencode.json
 {
-  "plugin": ["opencode-session-namer"]
+  "plugin": ["@maximtop/opencode-session-namer"]
 }
 ```
 
