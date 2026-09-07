@@ -39,7 +39,7 @@ rm ~/.config/opencode/plugins/session-namer.ts
 The config and state files (`~/.config/opencode/session-namer*.json`) stay in
 place; remove them too if the plugin should forget all processed sessions.
 
-## Install from npm (once published)
+## Install from npm
 
 ```jsonc
 // ~/.config/opencode/opencode.json
@@ -53,12 +53,25 @@ opencode installs npm plugins automatically at startup (cached in
 
 ## Release
 
-1. Bump `version` in `package.json`.
-2. `make check` must pass (PR test cases hit the real `gh` CLI — needs
-   `gh auth login`).
-3. `npm publish --access public` (first publish requires
-   `npm login` and the package name to be available).
-4. Tag the release: `git tag v<version> && git push --tags`.
+Releases are automated: pushing a `v*` tag runs
+[.github/workflows/release.yml](.github/workflows/release.yml) — checks,
+npm publish (OIDC trusted publishing), GitHub Release with generated notes.
+
+1. Bump `version` in `package.json`, land it on `master` with green CI.
+2. `git tag v<version> && git push origin v<version>`.
+3. Watch the run: `gh run watch`.
+
+The tag must match the `package.json` version (the workflow fails
+otherwise). To re-run a failed release for an existing tag:
+`gh workflow run release.yml -f tag=v<version>`.
+
+### One-time setup (done for v0.1.0)
+
+Trusted publishing can only be configured on an existing package, so
+v0.1.0 was published by hand, once: `npm login && npm publish --access
+public` from the tag commit. Then a trusted publisher was added on
+npmjs.com → package → Settings → Publishing access: GitHub Actions,
+repository `maximtop/opencode-session-namer`, workflow `release.yml`.
 
 ## Configuration deployed alongside
 

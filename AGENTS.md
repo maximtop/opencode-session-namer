@@ -45,6 +45,7 @@ disabled.
 │   ├── messages.ts            # first/newest message text part helper
 │   ├── text.ts                # template/humanize/truncate/sanitize helpers
 │   └── types.ts               # shared types
+├── .github/workflows/         # PR checks; tag-triggered npm publish + release
 ├── tests/session-namer.test.ts # vitest suite with a mock opencode client
 ├── package.json               # scripts and dev dependencies
 ├── tsconfig.json              # strict TS, noEmit

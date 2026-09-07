@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release (e.g. v0.1.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write      # gh release create
+  id-token: write      # npm OIDC trusted publishing
+  attestations: write  # npm publish --provenance
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - name: Verify tag matches package.json version
+        run: test "v$(node -p "require('./package.json').version")" = "$TAG"
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint, type-check, test
+        run: make check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Ensure npm CLI supports trusted publishing
+        run: npm install -g npm@^11.5.1
+
+      - name: Publish to npm (OIDC trusted publishing)
+        run: npm publish --provenance --access public
+
+      - name: Create GitHub release
+        run: gh release create "$TAG" --verify-tag --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
