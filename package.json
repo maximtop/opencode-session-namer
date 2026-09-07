@@ -21,6 +21,12 @@
     "title"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maximtop/opencode-session-namer.git"
+  },
+  "bugs": "https://github.com/maximtop/opencode-session-namer/issues",
+  "homepage": "https://github.com/maximtop/opencode-session-namer#readme",
   "peerDependencies": {
     "@opencode-ai/plugin": "*"
   },

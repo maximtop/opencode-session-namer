@@ -1,5 +1,8 @@
 # opencode-session-namer
 
+[![CI](https://github.com/maximtop/opencode-session-namer/actions/workflows/ci.yml/badge.svg)](https://github.com/maximtop/opencode-session-namer/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@maximtop/opencode-session-namer)](https://www.npmjs.com/package/@maximtop/opencode-session-namer)
+
 An [opencode](https://opencode.ai) plugin that gives sessions meaningful names, once, right after the first user message — and never touches them again.
 
 ```
@@ -26,7 +29,7 @@ An [opencode](https://opencode.ai) plugin that gives sessions meaningful names, 
 
 ## Install
 
-From npm (once published):
+From npm:
 
 ```jsonc
 // ~/.config/opencode/opencode.json
