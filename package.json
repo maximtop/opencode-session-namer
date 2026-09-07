@@ -1,6 +1,6 @@
 {
   "name": "@maximtop/opencode-session-namer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "opencode plugin that names sessions from PR links and project directories: [project] AG-123 Review pull/1226 <PR title>",
   "type": "module",
   "main": "src/index.ts",
