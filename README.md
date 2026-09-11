@@ -106,4 +106,4 @@ make check   # lint + type-check + tests
 The vitest suite drives the plugin with a mock opencode client; the PR cases
 make real `gh` calls and need `gh auth login`.
 
-See also: [AGENTS.md](https://github.com/maximtop/opencode-session-namer/blob/master/AGENTS.md), [DEPLOYMENT.md](https://github.com/maximtop/opencode-session-namer/blob/master/DEPLOYMENT.md).
+See also: [CHANGELOG.md](https://github.com/maximtop/opencode-session-namer/blob/master/CHANGELOG.md), [AGENTS.md](https://github.com/maximtop/opencode-session-namer/blob/master/AGENTS.md), [DEPLOYMENT.md](https://github.com/maximtop/opencode-session-namer/blob/master/DEPLOYMENT.md).

@@ -52,6 +52,7 @@ disabled.
 ├── .eslintrc.cjs              # airbnb + airbnb-typescript + jsdoc
 ├── vitest.config.ts
 ├── Makefile                   # init/lint/type-check/test wrappers
+├── CHANGELOG.md               # user-facing changes (Keep a Changelog)
 └── DEPLOYMENT.md              # install & release instructions
 ```
 
@@ -74,6 +75,16 @@ disabled.
   try/catch and logs via `client.app.log`.
 - Never rename a session twice; never override a title that was not produced
   by the built-in auto-title.
+
+## Changelog
+
+Maintain `CHANGELOG.md`
+([Keep a Changelog](https://keepachangelog.com/en/1.1.0/)):
+
+- add every user-facing change to `## [Unreleased]` under the matching
+  subsection — Added / Changed / Fixed / Removed;
+- one entry per change, written for a user, not a file-level diff summary;
+- never edit sections for released versions.
 
 ## Testing
 
