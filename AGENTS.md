@@ -149,8 +149,8 @@ The codebase follows these design principles:
   from the plugin signature.
 - **Data Flow Clarity** — events feed tracking, tracking feeds orchestration,
   orchestration performs the single title write.
-- **Minimize Coupling, Maximize Cohesion** — integration modules are siblings
-  with no cross-imports (see exclusions); shared helpers live in `text.ts`.
+- **Minimize Coupling, Maximize Cohesion** — modules stay self-contained and
+  interact through narrow interfaces; shared helpers live in `text.ts`.
 - **Make Invalid States Impossible** — discriminated unions, null-vs-value
   results (`ProjectInfo | null`), zod validation of user config.
 - **Observability Built-in** — a `LogFn` is threaded down from the entry; no
@@ -188,15 +188,6 @@ types.ts (shared types)
 `config.ts` and `state.ts` are also loaded by `index.ts` at startup; lower
 layers receive their results through injected dependencies. No layer may
 depend on a layer above it.
-
-**Known exclusions** (to be fixed):
-
-- `src/pr-link-llm.ts` imports the shared child-session helpers
-  (`resolveModel`, `CHILD_TOOLS_DISABLED`) from `src/shorten.ts`; a shared
-  `llm-child-session.ts` module would decouple the two features.
-- `src/index.ts` performs the late auto-title correction write
-  (`client.session.update`) itself instead of routing it through the
-  orchestration layer.
 
 ### Code Quality
 
@@ -252,12 +243,6 @@ depend on a layer above it.
 vulnerabilities, supply chain risks, and long-term maintenance costs.
 Runtime dependencies are installed with pnpm; `zod` is the only runtime
 dependency and is pinned exactly (`4.1.8`).
-
-**Known exclusions** (to be fixed):
-
-- devDependencies use caret ranges (`^`) instead of exact pins.
-- The `@opencode-ai/plugin` peer range is `*`, because the host opencode
-  installation provides it.
 
 ### Configuration & Documentation
 
