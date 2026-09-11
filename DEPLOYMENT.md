@@ -53,23 +53,45 @@ opencode installs npm plugins automatically at startup (cached in
 
 ## Release
 
-Releases are automated: pushing a `v*` tag runs
-[.github/workflows/release.yml](.github/workflows/release.yml) — checks,
-npm publish (OIDC trusted publishing), GitHub Release with generated notes.
+Releases are automated with
+[release-please](https://github.com/googleapis/release-please):
 
-1. Bump `version` in `package.json`, land it on `master` with green CI.
-2. `git tag v<version> && git push origin v<version>`.
-3. Watch the run: `gh run watch`.
+1. Commits to `master` follow
+   [Conventional Commits](https://www.conventionalcommits.org) (`feat:`,
+   `fix:`, `chore:` …). A `feat` or `fix` commit makes release-please open or
+   update a release PR.
+2. The release PR bumps `version` in `package.json` and updates
+   `CHANGELOG.md`; review and merge it.
+3. On merge, release-please creates the tag and GitHub Release with generated
+   notes, and the same run of
+   [.github/workflows/release.yml](.github/workflows/release.yml) runs the
+   checks and publishes to npm via OIDC trusted publishing.
 
-The tag must match the `package.json` version (the workflow fails
-otherwise). To re-run a failed release for an existing tag:
+To re-publish a failed release for an existing tag:
 `gh workflow run release.yml -f tag=v<version>`.
+
+Release settings:
+
+- `release-please-config.json` holds the release strategy; released versions
+  are tracked in `.release-please-manifest.json`.
+- The npm trusted publisher must keep pointing at the `release.yml` workflow
+  file.
+- Repository setting "Allow GitHub Actions to create and approve pull
+  requests" is enabled (Settings → Actions → General).
+- The release PR is opened by `github-actions[bot]`, so by default no CI runs
+  on it (GitHub suppresses workflow runs for `GITHUB_TOKEN`-created events).
+  The publish run re-checks the tagged commit with `make check` before
+  publishing. To run CI on release PRs, add a PAT as the
+  `RELEASE_PLEASE_TOKEN` secret; the workflow picks it up automatically.
+- `CHANGELOG.md` is managed by release-please from the first release on;
+  never edit released sections by hand.
 
 ### One-time setup (done for v0.1.0)
 
 Trusted publishing can only be configured on an existing package, so
-v0.1.0 was published by hand, once: `npm login && npm publish --access
-public` from the tag commit. Then a trusted publisher was added on
+v0.1.0 was published by hand, once:
+`npm login && npm publish --access public` from the tag commit. Then a
+trusted publisher was added on
 npmjs.com → package → Settings → Publishing access: GitHub Actions,
 repository `maximtop/opencode-session-namer`, workflow `release.yml`.
 
