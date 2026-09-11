@@ -83,11 +83,8 @@ Release settings:
   The publish run re-checks the tagged commit with `make check` before
   publishing. To run CI on release PRs, add a PAT as the
   `RELEASE_PLEASE_TOKEN` secret; the workflow picks it up automatically.
-
-**Bootstrap note**: the `## [Unreleased]` section in `CHANGELOG.md` predates
-release-please. When the first release PR appears, move that entry into the
-generated version section and delete the `## [Unreleased]` section;
-release-please manages the changelog from then on.
+- `CHANGELOG.md` is managed by release-please from the first release on;
+  never edit released sections by hand.
 
 ### One-time setup (done for v0.1.0)
 
