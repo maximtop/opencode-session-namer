@@ -39,13 +39,15 @@ const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const fixtures = join(repoRoot, '.test-fixtures');
 const gitProject = join(fixtures, 'browser-extension');
 const keyedProject = join(fixtures, 'keyed-project');
-const mainRepo = join(fixtures, 'main-repo');
+const camelProject = join(fixtures, 'CamelProject');
+const mainRepo = join(fixtures, 'MainRepo');
 const wtGitdir = join(mainRepo, '.git', 'worktrees', 'fix-AG-56856');
 const worktree = join(fixtures, 'wt', 'fix-AG-56856');
 
 beforeAll(async () => {
     await fsp.mkdir(join(gitProject, '.git'), { recursive: true });
     await fsp.mkdir(join(keyedProject, '.git'), { recursive: true });
+    await fsp.mkdir(join(camelProject, '.git'), { recursive: true });
     await fsp.writeFile(
         join(keyedProject, '.git', 'HEAD'),
         'ref: refs/heads/feature/AG-12345\n',
@@ -373,7 +375,7 @@ describe('session-namer', () => {
         await drive(hooks, session, { autoTitle: 'Review pull request', updates });
         expect(updates).toHaveLength(1);
         const title = updates[0]?.body.title ?? '';
-        expect(title.startsWith('[filters registry] Review pull/1226 ')).toBe(true);
+        expect(title.startsWith('[FiltersRegistry] Review pull/1226 ')).toBe(true);
         expect(title.length).toBeLessThanOrEqual(90);
     }, 30000);
 
@@ -389,7 +391,7 @@ describe('session-namer', () => {
         await drive(hooks, session, { autoTitle: 'Review changeset', updates });
         expect(updates).toHaveLength(1);
         const title = updates[0]?.body.title ?? '';
-        expect(title.startsWith('[filters registry] Review pull/1226 '))
+        expect(title.startsWith('[FiltersRegistry] Review pull/1226 '))
             .toBe(true);
     }, 30000);
 
@@ -450,7 +452,7 @@ describe('session-namer', () => {
         const hooks = await SessionNamer({ client } as Ctx);
         await drive(hooks, session, { autoTitle: 'Continue stealth fix', updates });
         expect(updates).toHaveLength(1);
-        expect(updates[0]?.body.title).toBe('[main-repo] AG-56856 Continue stealth fix');
+        expect(updates[0]?.body.title).toBe('[MainRepo] AG-56856 Continue stealth fix');
     });
 
     it('picks the issue key from a regular checkout branch', async () => {
@@ -597,7 +599,7 @@ describe('session-namer', () => {
         const hooks = await SessionNamer({ client } as Ctx);
         await drive(hooks, session, { autoTitle: 'Review pull request', updates });
         expect(updates).toHaveLength(1);
-        expect(updates[0]?.body.title?.startsWith('filters registry | PR#1226: ')).toBe(true);
+        expect(updates[0]?.body.title?.startsWith('FiltersRegistry | PR#1226: ')).toBe(true);
     }, 30000);
 
     it('can render a slash-separated template with an empty slot', async () => {
@@ -613,7 +615,7 @@ describe('session-namer', () => {
         const hooks = await SessionNamer({ client } as Ctx);
         await drive(hooks, session, { autoTitle: 'Review pull request', updates });
         expect(updates).toHaveLength(1);
-        expect(updates[0]?.body.title?.startsWith('filters registry/PR#1226: ')).toBe(true);
+        expect(updates[0]?.body.title?.startsWith('FiltersRegistry/PR#1226: ')).toBe(true);
     }, 30000);
 
     it('smartShorten shortens overlong titles via a child session', async () => {
@@ -628,7 +630,7 @@ describe('session-namer', () => {
         await drive(hooks, session, { autoTitle: 'Review pull request', updates });
         expect(updates).toHaveLength(1);
         expect(updates[0]?.body.title).toBe(
-            '[filters registry] Review pull/1226 Strip version/timeUpdated fields',
+            '[FiltersRegistry] Review pull/1226 Strip version/timeUpdated fields',
         );
         expect(childCalls.created).toBe(1);
         expect(childCalls.prompted).toBe(1);
@@ -648,7 +650,7 @@ describe('session-namer', () => {
         expect(updates).toHaveLength(1);
         const title = updates[0]?.body.title ?? '';
         expect(title.length).toBeLessThanOrEqual(90);
-        expect(title.startsWith('[filters registry] Review pull/1226 Strips')).toBe(true);
+        expect(title.startsWith('[FiltersRegistry] Review pull/1226 Strips')).toBe(true);
     }, 30000);
 });
 
@@ -1162,7 +1164,7 @@ describe('pr-link LLM fallback', () => {
         await drive(hooks, session, { updates });
         const title = updates[0]?.body.title ?? '';
         expect(childCalls.created).toBeGreaterThan(0);
-        expect(title).toContain('[filters registry]');
+        expect(title).toContain('[FiltersRegistry]');
         expect(title).toContain('Review pull/1226');
     });
 
@@ -1196,4 +1198,44 @@ describe('pr-link LLM fallback', () => {
         expect(childCalls.created).toBe(0);
         expect(title).toContain('Review pull/1226');
     });
+});
+
+describe('raw project labels', () => {
+    it('keeps the directory name exactly as written', async () => {
+        await writeConfig({});
+        const session = freshSession({ directory: camelProject });
+        const { client, updates, childCalls } = makeClient({
+            session,
+            firstUserText: 'fix it',
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await drive(hooks, session, {
+            autoTitle: 'Fixing the flaky test',
+            updates,
+        });
+        expect(updates).toHaveLength(1);
+        expect(updates[0]?.body.title).toBe(
+            '[CamelProject] Fixing the flaky test',
+        );
+        expect(childCalls.created).toBe(0);
+    });
+
+    it('keeps the PR repo name exactly as written', async () => {
+        await writeConfig({});
+        const session = freshSession();
+        const pr = 'https://github.com/AdguardTeam/AdGuardFiltersStats/pull/32';
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: `review ${pr}`,
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await drive(hooks, session, {
+            autoTitle: 'Review pull request',
+            updates,
+        });
+        expect(updates).toHaveLength(1);
+        const title = updates[0]?.body.title ?? '';
+        expect(title.startsWith('[AdGuardFiltersStats]')).toBe(true);
+        expect(title).toContain('Review pull/32');
+    }, 30000);
 });

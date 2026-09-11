@@ -43,7 +43,7 @@ disabled.
 │   ├── state.ts               # rename-once state file
 │   ├── tracking.ts            # title-provenance state machine (pure)
 │   ├── messages.ts            # first/newest message text part helper
-│   ├── text.ts                # template/humanize/truncate/sanitize helpers
+│   ├── text.ts                # template/truncate/sanitize helpers
 │   └── types.ts               # shared types
 ├── .github/workflows/         # PR checks; tag-triggered npm publish + release
 ├── tests/session-namer.test.ts # vitest suite with a mock opencode client

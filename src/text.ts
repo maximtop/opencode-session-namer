@@ -1,18 +1,4 @@
 /**
- * Turns a directory or repo name into a display label:
- * "FiltersRegistry" → "filters registry", "browser-extension" stays as is.
- * @param name raw directory or repository name
- * @returns display label
- */
-export function humanize(name: string): string {
-    return name
-        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-        .replace(/_+/g, ' ')
-        .toLowerCase()
-        .trim();
-}
-
-/**
  * Cuts text to `max` characters, preferring the last word boundary in the
  * second half of the window; hard-cuts mid-word when no such boundary exists.
  * @param text text to cut

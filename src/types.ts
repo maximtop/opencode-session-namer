@@ -111,9 +111,10 @@ export interface PrLink {
  */
 export interface ProjectInfo {
     /**
-     * Humanized project name, e.g. "filters registry".
+     * Raw repository or directory name, e.g. "AdGuardFiltersStats"; the
+     * caller derives the display label.
      */
-    label: string;
+    name: string;
     /**
      * Issue key from the branch, when detectable.
      */
