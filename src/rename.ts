@@ -9,7 +9,6 @@ import {
     deriveBase,
     escapeRegExp,
     expandSlots,
-    humanize,
     sanitize,
     truncateAtWord,
 } from './text';
@@ -77,7 +76,7 @@ interface RenamerDeps {
  */
 interface ComposeInput {
     /**
-     * Project label, e.g. "filters registry".
+     * Project name as written on disk, e.g. "AdGuardFiltersStats".
      */
     project: string;
     /**
@@ -238,7 +237,7 @@ export function createRenamer(deps: RenamerDeps) {
         sessionID: string,
         directory: string,
     ): Promise<string> {
-        const project = humanize(pr.repo);
+        const project = pr.repo;
         const agKey = extractAgKey(info?.branch)
             ?? extractAgKey(info?.title);
         // PR titles often start with the issue key ("AG-31699: Add …") —
@@ -394,7 +393,7 @@ export function createRenamer(deps: RenamerDeps) {
                     : deriveBase(text, config.maxLength);
                 if (base && (!fromTitle || !base.startsWith('['))) {
                     title = await composeTitle({
-                        project: dir.label,
+                        project: dir.name,
                         agKey: dir.agKey,
                         desc: base,
                         sessionID,

@@ -1,7 +1,6 @@
 import { promises as fsp } from 'node:fs';
 import { join, basename } from 'node:path';
 import { tmpdir } from 'node:os';
-import { humanize } from './text';
 import type { AgKeyExtractor, ProjectInfo } from './types';
 
 /**
@@ -24,12 +23,12 @@ async function branchAgKey(
 }
 
 /**
- * Resolves the project label from the session directory.
+ * Resolves the project name from the session directory.
  *
  * - Regular checkout: the directory basename; the key comes from the branch
  * recorded in `.git/HEAD`, when it has one.
  * - Linked worktree: `.git` is a file pointing into the main repo, so the
- * label is the main repo name and the key comes from the branch.
+ * name is the main repo name and the key comes from the branch.
  * - Scratch dirs (chats, tmp, non-git) → null, session keeps the auto-title.
  * @param dir session directory
  * @param extractAgKey issue key extractor
@@ -63,13 +62,13 @@ export async function projectForDirectory(
         // regular checkout: the branch (and its issue key) lives in
         // .git/HEAD
         const agKey = await branchAgKey(gitPath, extractAgKey);
-        return { label: humanize(basename(dir)), agKey };
+        return { name: basename(dir), agKey };
     }
     if (!stat.isFile()) {
         return null;
     }
     const fallback: ProjectInfo = {
-        label: humanize(basename(dir)),
+        name: basename(dir),
         agKey: null,
     };
     try {
@@ -86,7 +85,7 @@ export async function projectForDirectory(
             return fallback; // submodule or other layout
         }
         const agKey = await branchAgKey(gitdir, extractAgKey);
-        return { label: humanize(basename(worktree[1])), agKey };
+        return { name: basename(worktree[1]), agKey };
     } catch {
         return fallback;
     }
