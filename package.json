@@ -28,10 +28,11 @@
   "bugs": "https://github.com/maximtop/opencode-session-namer/issues",
   "homepage": "https://github.com/maximtop/opencode-session-namer#readme",
   "peerDependencies": {
-    "@opencode-ai/plugin": "*"
+    "@opencode-ai/plugin": "*",
+    "@opencode/plugin": "*"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.18.27",
+    "@opencode-ai/plugin": "1.18.27",
     "@types/node": "^24.9.1",
     "@typescript-eslint/eslint-plugin": "^7.18.0",
     "@typescript-eslint/parser": "^7.18.0",
@@ -42,9 +43,22 @@
     "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-jsdoc": "^60.6.0",
     "typescript": "^5.8.3",
-    "vitest": "^4.0.6"
+    "vitest": "^4.0.6",
+    "@opencode/plugin": "2.0.14"
   },
   "dependencies": {
     "zod": "4.1.8"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": {
+      "optional": true
+    },
+    "@opencode/plugin": {
+      "optional": true
+    }
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./server": "./src/server.ts"
   }
 }

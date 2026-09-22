@@ -1,7 +1,6 @@
 import { findPrCandidates } from './pr-link';
 import { createPrLinkExtractor } from './pr-link-llm';
 import { fetchGhPrInfo } from './github';
-import { messageText } from './messages';
 import { projectForDirectory } from './project';
 import { createSmartShorten } from './shorten';
 import {
@@ -12,11 +11,10 @@ import {
     sanitize,
     truncateAtWord,
 } from './text';
-import { DEFAULT_TITLE_RE } from './tracking';
+import type { NamingHost } from './host';
 import type {
     AgKeyExtractor,
     LogFn,
-    PluginClient,
     PluginConfig,
     PrInfo,
     PrLink,
@@ -36,35 +34,42 @@ const MAX_RENAME_ATTEMPTS = 10;
  */
 interface RenamerDeps {
     /**
-     * opencode SDK client.
+     * Injected host operations.
      */
-    client: PluginClient;
+    host: NamingHost;
+
     /**
      * Effective plugin configuration.
      */
     config: PluginConfig;
+
     /**
      * Issue key extractor built from the configured pattern.
      */
     extractAgKey: AgKeyExtractor;
+
     /**
-     * Leveled logger bound to the opencode app log.
+     * Operational diagnostics supplied by the host adapter.
      */
     log: LogFn;
+
     /**
      * Rename-once persistence state.
      */
     state: State;
+
     /**
      * Per-session in-memory tracking map.
      */
     tracked: Map<string, TrackedSession>;
+
     /**
      * Marks a session as processed and persists the state file; the applied
      * title is kept until the session first goes idle so a late auto-title
      * write can be corrected once.
      */
     markProcessed: (sessionID: string, appliedTitle?: string) => Promise<void>;
+
     /**
      * Releases the scheduled latch so a later idle can retry.
      */
@@ -79,26 +84,36 @@ interface ComposeInput {
      * Project name as written on disk, e.g. "AdGuardFiltersStats".
      */
     project: string;
+
     /**
      * Issue key or null when none was found.
      */
     agKey: string | null;
+
     /**
      * Structural prefix kept as is (e.g. the PR reference).
      */
     keepPrefix?: string;
+
     /**
      * Descriptive part, shortened when the result is too long.
      */
     desc: string;
+
     /**
      * Session being renamed (smartShorten parent).
      */
     sessionID: string;
+
     /**
      * Working directory for smartShorten.
      */
     directory: string;
+
+    /**
+     * Cancellation for pending naming work.
+     */
+    signal?: AbortSignal;
 }
 
 /**
@@ -110,11 +125,11 @@ interface ComposeInput {
  */
 export function createRenamer(deps: RenamerDeps) {
     const {
-        client, config, extractAgKey, log, state, tracked, markProcessed,
+        host, config, extractAgKey, log, state, tracked, markProcessed,
         releaseScheduled,
     } = deps;
-    const smartShorten = createSmartShorten(client, config, log);
-    const extractPrLink = createPrLinkExtractor(client, config, log);
+    const smartShorten = createSmartShorten(host, config);
+    const extractPrLink = createPrLinkExtractor(host, config);
 
     /**
      * Counts a failed rename attempt and gives up (sets givenUp, holds the
@@ -207,11 +222,12 @@ export function createRenamer(deps: RenamerDeps) {
                     budget,
                     sessionID,
                     directory,
+                    input.signal,
                 );
-            } catch (e) {
+            } catch {
+                input.signal?.throwIfAborted();
                 log('warn', 'smartShorten failed, falling back', {
                     sessionID,
-                    error: String(e),
                 });
             }
         }
@@ -229,6 +245,7 @@ export function createRenamer(deps: RenamerDeps) {
      * naming)
      * @param sessionID session being renamed
      * @param directory session working directory
+     * @param signal cancellation of pending operations
      * @returns final session title
      */
     async function prTitle(
@@ -236,6 +253,7 @@ export function createRenamer(deps: RenamerDeps) {
         info: PrInfo | null,
         sessionID: string,
         directory: string,
+        signal?: AbortSignal,
     ): Promise<string> {
         const project = pr.repo;
         const agKey = extractAgKey(info?.branch)
@@ -256,6 +274,7 @@ export function createRenamer(deps: RenamerDeps) {
             desc: title ?? '',
             sessionID,
             directory,
+            signal,
         });
     }
 
@@ -266,8 +285,13 @@ export function createRenamer(deps: RenamerDeps) {
      * title write, no user message yet) release the scheduled latch so a
      * later idle re-arms the rename.
      * @param sessionID session to rename
+     * @param signal cancellation of pending operations
      */
-    return async function rename(sessionID: string): Promise<void> {
+    return async function rename(
+        sessionID: string,
+        signal?: AbortSignal,
+    ): Promise<void> {
+        signal?.throwIfAborted();
         if (state.processed[sessionID]) {
             return;
         }
@@ -280,11 +304,9 @@ export function createRenamer(deps: RenamerDeps) {
             return;
         }
 
-        const got = await client.session.get({
-            path: { id: sessionID },
-            query: { directory: rec?.directory },
+        const session = await host.getSession({
+            sessionID, directory: rec?.directory, signal,
         });
-        const session = got.data;
         if (!session) {
             // transient — try again on a later idle
             releaseScheduled(sessionID);
@@ -297,7 +319,7 @@ export function createRenamer(deps: RenamerDeps) {
             return;
         }
 
-        const isDefault = DEFAULT_TITLE_RE.test(session.title);
+        const isDefault = host.isDefaultTitle(session.title);
         if (!isDefault) {
             // Replace only the known auto-title. Anything else is a manual
             // or external rename — leave it alone.
@@ -312,16 +334,17 @@ export function createRenamer(deps: RenamerDeps) {
             }
         }
 
-        // No limit: the v1 messages endpoint has no `order` param, and when
-        // a limit is set it pages newest-first (desc + limit, reversed for
-        // the response) — a bounded window can't reliably reach the
-        // session's FIRST textful user message. With no limit the handler
-        // returns the full history; the give-up cap below bounds the cost.
-        const messages = await client.session.messages({
-            path: { id: sessionID },
-            query: { directory: session.directory },
+        const evidence = await host.firstUserText({
+            sessionID, directory: session.directory, signal,
         });
-        const text = messageText(messages.data ?? [], 'user', 'first');
+        if (evidence.kind === 'unavailable') {
+            log('info', 'original message unavailable after compaction; skipped', {
+                sessionID,
+            });
+            await markProcessed(sessionID);
+            return;
+        }
+        const text = evidence.kind === 'text' ? evidence.text : null;
         if (!text) {
             // no user message yet (idle before the first message) — retry
             // on a later idle
@@ -342,7 +365,7 @@ export function createRenamer(deps: RenamerDeps) {
         const checks = await Promise.all(findPrCandidates(text).map(
             async (candidate) => ({
                 candidate,
-                info: await fetchGhPrInfo(candidate, log),
+                info: await fetchGhPrInfo(candidate, log, signal),
             }),
         ));
         for (const { candidate, info } of checks) {
@@ -359,23 +382,30 @@ export function createRenamer(deps: RenamerDeps) {
                     text,
                     sessionID,
                     session.directory,
+                    signal,
                 );
                 if (extracted) {
-                    const info = await fetchGhPrInfo(extracted, log);
+                    const info = await fetchGhPrInfo(extracted, log, signal);
                     if (isUsablePr(extracted, info, sessionID)) {
                         pr = extracted;
                         prInfo = info;
                     }
                 }
-            } catch (e) {
+            } catch {
+                signal?.throwIfAborted();
                 log('warn', 'pr-link llm extraction failed, naming by project', {
                     sessionID,
-                    error: String(e),
                 });
             }
         }
         if (pr) {
-            title = await prTitle(pr, prInfo, sessionID, session.directory);
+            title = await prTitle(
+                pr,
+                prInfo,
+                sessionID,
+                session.directory,
+                signal,
+            );
         }
         if (!pr) {
             const dir = await projectForDirectory(
@@ -398,6 +428,7 @@ export function createRenamer(deps: RenamerDeps) {
                         desc: base,
                         sessionID,
                         directory: session.directory,
+                        signal,
                     });
                 }
             }
@@ -405,12 +436,19 @@ export function createRenamer(deps: RenamerDeps) {
 
         const safe = title ? sanitize(title) : null;
         if (safe && safe !== session.title) {
-            const res = await client.session.update({
-                path: { id: sessionID },
-                query: { directory: session.directory },
-                body: { title: safe },
+            signal?.throwIfAborted();
+            const current = await host.getSession({
+                sessionID, directory: session.directory, signal,
             });
-            if (res.error) {
+            signal?.throwIfAborted();
+            if (!current || current.title !== session.title || rec?.foreign) {
+                releaseScheduled(sessionID);
+                return;
+            }
+            const written = await host.updateTitle({
+                sessionID, directory: session.directory, signal,
+            }, safe);
+            if (!written) {
                 // a failed write must not consume the rename-once budget —
                 // retry on a later idle
                 if (noteFailedAttempt(sessionID, 'title write keeps failing')) {
@@ -418,7 +456,6 @@ export function createRenamer(deps: RenamerDeps) {
                 }
                 log('warn', 'title write failed, will retry on next idle', {
                     sessionID,
-                    error: JSON.stringify(res.error),
                 });
                 releaseScheduled(sessionID);
                 return;

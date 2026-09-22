@@ -28,17 +28,18 @@ uniform format once per session, right after the first user message:
 
 The plugin is deterministic by default (no LLM calls). Optional LLM modes —
 `smartShorten` (shorten overlong titles) and `prLinkLlm` (ask which PR the
-first message references) — run in throwaway child sessions with all tools
-disabled. A session is renamed at most once; a title not produced by the
-built-in auto-title is never overridden.
+first message references) — use tool-disabled child sessions on V1 and
+standalone tool-free text generation on V2. A session is initially renamed
+once, with one bounded late-auto-title correction. Other recognized titles
+are protected.
 
 ## Technical Context
 
 - **Language/Version**: TypeScript 5.8, strict mode, ES2022 target.
 - **Runtime**: loaded by opencode's plugin system (Bun); plain Node APIs only
   (`node:fs/promises`, `node:child_process`), no Bun-specific imports.
-- **Primary Dependencies**: zod at runtime; `@opencode-ai/plugin` as a peer
-  dependency.
+- **Primary Dependencies**: zod at runtime; `@opencode-ai/plugin` and
+  `@opencode/plugin` as optional peers, imported only for types.
 - **External Tools**: `gh` CLI for PR title/branch lookup (optional; the
   plugin degrades to URL-only naming without it).
 - **Storage**: `~/.config/opencode/session-namer.state.json` — rename-once
@@ -57,9 +58,16 @@ built-in auto-title is never overridden.
 ```text
 .
 ├── src/
-│   ├── index.ts               # plugin entry: tracking + event hook
+│   ├── index.ts               # preserved V1 plugin factory
+│   ├── server.ts              # automatic dual-host package entry
+│   ├── host.ts                # host contracts and HostProtocol namespace
+│   ├── events.ts              # shared event names for both host generations
+│   ├── session-cache.ts       # bounded transient session/replay evidence
+│   ├── host-v1.ts             # V1Host class and helper-session cleanup
+│   ├── host-v2.ts             # V2Host class and event subscription
+│   ├── lifecycle.ts           # shared tracking, timers and cancellation
 │   ├── rename.ts              # rename orchestration
-│   ├── shorten.ts             # smartShorten via a throwaway child session
+│   ├── shorten.ts             # shared title-shortening prompt policy
 │   ├── project.ts             # directory/worktree → project name + key
 │   ├── pr-link.ts             # PR link extraction from the first message
 │   ├── pr-link-llm.ts         # LLM fallback: which PR the message references
@@ -71,6 +79,7 @@ built-in auto-title is never overridden.
 │   ├── text.ts                # template/truncate/sanitize helpers
 │   └── types.ts               # shared types
 ├── .github/workflows/         # PR checks; release-please + npm publish
+├── .sdd/                      # local active and completed SDD records
 ├── tests/session-namer.test.ts # vitest suite with a mock opencode client
 ├── package.json               # scripts and dev dependencies
 ├── tsconfig.json              # strict TS, noEmit
@@ -92,7 +101,7 @@ built-in auto-title is never overridden.
 - `make check` — lint + type-check + test: the full gate
 
 There is no separate formatter (eslint enforces the style) and no build step:
-opencode loads `src/index.ts` directly.
+the host loads the appropriate TypeScript entry directly.
 
 ## Contribution Instructions
 
@@ -126,8 +135,9 @@ Design for a plugin library loaded into a host process:
 - The plugin runs inside the opencode server process. Keep side effects to
   the documented surfaces: config/state files under `~/.config/opencode`,
   the `gh` CLI, and SDK client calls. Never touch unrelated host state.
-- The public API is the `SessionNamer` plugin factory in `src/index.ts`;
-  every other module is an implementation detail.
+- Public entries are the preserved V1 `SessionNamer` in `src/index.ts` and
+  the default dual-host definition exported through `./server`. Other
+  modules are implementation details.
 - Keep the dependency footprint minimal — `zod` is the only runtime
   dependency; prefer Node built-ins over adding packages.
 - Do not add process listeners, global singletons, or environment mutations.
@@ -136,7 +146,8 @@ Design for a plugin library loaded into a host process:
   `any`.
 - Document the plugin factory and every non-trivial function with JSDoc.
 - Handle errors at the boundary: never let an exception escape the plugin —
-  log via `client.app.log` and degrade to the safest behavior.
+  log through the injected host and degrade to the safest behavior. V1 uses
+  `client.app.log`; V2 uses structured stderr without prompt data or secrets.
 
 ### Architecture
 
@@ -164,34 +175,29 @@ The codebase follows these design principles:
   abstractions.
 
 The easiest way to achieve these principles is **layered architecture**.
-This project's layers, from top to bottom:
+This project's boundaries:
 
-- **Entry / lifecycle** — `src/index.ts`: plugin factory, event hook,
-  scheduling, state ownership, logging adapter.
-- **Orchestration** — `src/rename.ts`: eligibility, evidence gathering,
-  title composition, the single `session.update`.
-- **Integrations** — `src/project.ts`, `src/github.ts`, `src/config.ts`,
-  `src/state.ts`, `src/shorten.ts`, `src/pr-link-llm.ts`: fs, env, `gh`, and
-  LLM child sessions.
-- **Pure domain and utilities** — `src/tracking.ts`, `src/pr-link.ts`,
-  `src/text.ts`, `src/messages.ts`: parsing, provenance, formatting — no I/O.
-- **Types** — `src/types.ts`: shared interfaces, erased at runtime.
+- **Entries** — `index.ts` preserves the V1 factory; `server.ts` allows the
+  host to select V1 `server` or V2 `setup` automatically.
+- **Host adapters** — `host-v1.ts` maps SDK calls and owns temporary helper
+  sessions; `host-v2.ts` maps SDK calls and owns the scoped event stream.
+- **Lifecycle** — `lifecycle.ts` owns tracking, scheduling, cancellation and
+  persistent state. Both adapters supply the narrow `NamingHost` contract.
+- **Policy** — `rename.ts`, `shorten.ts`, `pr-link-llm.ts` implement shared
+  naming and prompt policy. They receive host operations by injection and
+  never import an adapter or either SDK.
+- **Integrations** — `project.ts`, `github.ts`, `config.ts`, `state.ts` own
+  filesystem/configuration, GitHub lookup and persistence.
+- **Pure helpers** — `tracking.ts`, `pr-link.ts`, `text.ts`, `messages.ts`,
+  `session-cache.ts`.
+- **Contracts** — `host.ts` defines host operations, normalized events and
+  the stateless `HostProtocol` namespace; `types.ts` defines shared data.
+  SDK imports are type-only.
 
-```text
-index.ts (entry, lifecycle, state ownership)
-     ↓
-rename.ts (title orchestration)
-     ↓
-project.ts · github.ts · config.ts · state.ts · shorten.ts · pr-link-llm.ts
-     ↓
-tracking.ts · pr-link.ts · text.ts · messages.ts (pure)
-     ↓
-types.ts (shared types)
-```
-
-`config.ts` and `state.ts` are also loaded by `index.ts` at startup; lower
-layers receive their results through injected dependencies. No layer may
-depend on a layer above it.
+`lifecycle.ts` loads configuration and state once per instance. Preserve
+acyclic imports: shared policy depends on contracts and injected operations,
+not concrete host implementations. Keep generation-specific session cleanup
+inside its adapter rather than duplicating it in each prompt helper.
 
 ### Code Quality
 
@@ -199,9 +205,21 @@ depend on a layer above it.
 - No one-line `if` statements — always braces with a multiline body.
 - Async `node:fs/promises` everywhere; no sync fs calls.
 - JSDoc on non-trivial functions with `@param`/`@returns`.
+- Separate a property's JSDoc from the preceding property with a blank line;
+  ESLint enforces the spacing and allows the first comment in a type body.
+- Keep helper task instructions separate from untrusted source data; encode
+  only the source text when composing model prompts.
+- Keep transient session/replay caches bounded and release cancellation
+  resources when a session is retired. Persistent rename history owns the
+  long-term once-only decision.
+- Prefer classes as namespaces for cohesive operations. Use static methods
+  for operations without instance state; keep injected dependencies and
+  mutable state on instances. Preserve host-required function/object exports.
+- Implement SDK adapters as classes satisfying `NamingHost`; bind callbacks
+  that consumers pass separately from the instance.
 - Prefer discriminated-union narrowing over hand-written type guards.
 - Never throw past the plugin boundary: the `event` hook wraps everything in
-  try/catch and logs via `client.app.log`; degraded paths (URL-only naming,
+  try/catch and logs through the host adapter; degraded paths (URL-only naming,
   word truncation) are expected.
 - Never rename a session twice; never override a title that was not produced
   by the built-in auto-title.
@@ -212,15 +230,18 @@ depend on a layer above it.
   variables, PascalCase types; no `I` prefix on interfaces.
 - Imports are relative and extensionless; type-only imports use
   `import type`.
+- Use `EventType` for event names shared by adapters and the lifecycle;
+  derive SDK-compatible discriminator types from it instead of repeating
+  string literals.
 - Do not loosen lint rules to make code pass — fix the code.
 
 ### Testing
 
 - Single suite at `tests/session-namer.test.ts`; vitest is configured in
   `vitest.config.ts` with a 30s timeout for real `gh` calls.
-- Tests drive the plugin's `event` hook with a mock SDK client and assert the
-  captured `session.update` titles; prefer behavior-level assertions over
-  internals.
+- Tests drive V1 hooks, the V2 event stream and the shared lifecycle with
+  mock SDK contexts and assert captured title writes; prefer behavior-level
+  assertions over internals.
 - Fixtures (plain git projects — one on a keyed branch — and a linked
   worktree pair) are created under `.test-fixtures/` next to the repo because
   the plugin ignores sessions in temp/scratch directories.

@@ -16,14 +16,16 @@ const GH_TIMEOUT_MS = 15000;
  * GH_HOST names, so a link from an untrusted message could exfiltrate them).
  * @param pr parsed PR link
  * @param log leveled logger
+ * @param signal cancellation of pending operations
  * @returns PR info or null on any failure
  */
 export async function fetchGhPrInfo(
     pr: PrLink,
     log: LogFn,
+    signal?: AbortSignal,
 ): Promise<PrInfo | null> {
     if (pr.host !== 'https://github.com') {
-        log('warn', 'unsupported PR host, naming from URL only', {
+        log('warn', 'unsupported PR host; skipped', {
             host: pr.host,
             repo: `${pr.owner}/${pr.repo}`,
             number: pr.number,
@@ -38,6 +40,7 @@ export async function fetchGhPrInfo(
     try {
         const { stdout } = await execFileAsync('gh', args, {
             timeout: GH_TIMEOUT_MS,
+            signal,
             // gh resolves its API host from GH_HOST — pin it so the request
             // destination matches the github.com-only guard above instead of
             // the machine's GHES config.
@@ -52,11 +55,11 @@ export async function fetchGhPrInfo(
                 ? obj.headRefName
                 : null,
         };
-    } catch (e) {
+    } catch {
+        signal?.throwIfAborted();
         log('warn', 'gh PR fetch failed, naming from URL only', {
             repo: `${pr.owner}/${pr.repo}`,
             number: pr.number,
-            error: String(e),
         });
         return null;
     }

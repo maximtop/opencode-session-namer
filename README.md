@@ -27,7 +27,27 @@ An [opencode](https://opencode.ai) plugin that gives sessions meaningful names, 
 - The rename fires ~10s after the first user message (falling back to the first `session.idle` for sessions restored before the plugin saw them). If a title recorded as the built-in auto-title is written again over ours before the first idle, our title is re-applied exactly once; a change from any other source — including a manual rename — wins immediately and closes that correction window. After the first idle, later changes are never touched.
 - No LLM calls by default; naming is deterministic. Failures never break the session — the plugin just logs and moves on.
 
+On V2, a restored session may expose only history after compaction. When
+its original first user message is unavailable, the plugin leaves that old
+session unchanged and logs the reason. A summary or later message is never
+used as a substitute. New sessions retain normal automatic naming.
+
+Pending naming is cancelled when a session is deleted or the plugin is
+unloaded. A title whose auto-title provenance was not observed remains
+protected; the existing early-manual-title ambiguity is unchanged.
+
+Transient ownership and replay caches retain at most 1,024 recent sessions
+per plugin instance. Retained rename history still uses the existing state
+file and 30-day retention.
+
 ## Install
+
+One package supports both host generations automatically. Verified with
+OpenCode V1 **1.18.27**, V1 **1.18.32** and V2 **2.0.14**. Existing V1 users
+can keep their host version, settings and registration; there is no
+compatibility-mode setting.
+
+### OpenCode V1
 
 From npm:
 
@@ -49,6 +69,33 @@ ln -s "$PWD/src/index.ts" ~/.config/opencode/plugins/session-namer.ts
 
 Restart opencode / OpenChamber to load the plugin.
 
+### OpenCode V2
+
+Use V2's native `plugins` setting:
+
+```json
+{
+  "plugins": ["@maximtop/opencode-session-namer"]
+}
+```
+
+For a local checkout, run `pnpm install` there and register the absolute
+**directory** containing the server entry, for example:
+
+```json
+{
+  "plugins": ["/absolute/path/opencode-session-namer/src"]
+}
+```
+
+V2 selects `server.ts` inside that directory. It requires a directory in
+this setting, not the path to an individual TypeScript file. Keep only one
+registration: either the package or the checkout.
+
+Restart V2 and let it finish installing/loading configured plugins before
+starting a new chat. The V1 and V2 configuration keys are host conventions;
+the package itself selects the correct integration automatically.
+
 ## Configuration
 
 All optional; create `~/.config/opencode/session-namer.json` to override:
@@ -60,8 +107,8 @@ All optional; create `~/.config/opencode/session-namer.json` to override:
 | `agKeyPattern` | `[A-Z][A-Z0-9]{1,9}-\d+` | Regex for the issue key; an optional capture group selects the key. An empty string falls back to the default. |
 | `maxLength` | `90` | Titles longer than this get shortened. |
 | `smartShorten` | `false` | Shorten overlong titles with an LLM instead of a hard word-cut. |
-| `smartShortenModel` | `null` | `provider/model` for shortening; defaults to `small_model` from the opencode config. |
-| `prLinkLlm` | `false` | When no PR link is found in the first message, ask a small LLM (throwaway child session) which PR it references; the reply is validated before use. |
+| `smartShortenModel` | `null` | `provider/model` for both model helpers; otherwise V1 uses `small_model`/host default and V2 uses the host default. |
+| `prLinkLlm` | `false` | When no PR link is found in the first message, ask a tool-free model helper which GitHub PR it references; the reply is validated before use. |
 | `renameDelayMs` | `10000` | Delay after the first user message (or first idle) before renaming. |
 
 ### Environment overrides
@@ -74,10 +121,24 @@ All optional; create `~/.config/opencode/session-namer.json` to override:
 
 ### smartShorten
 
-When enabled, an overlong descriptive part is shortened by a small model through a throwaway child session (created, prompted once, deleted). Only the descriptive part is shortened — the structural prefix (`[project] AG-123 Review pull/N`) stays intact. On any failure the plugin falls back to word truncation.
+When enabled, only an overlong descriptive part is shortened; the structural
+prefix (`[project] AG-123 Review pull/N`) stays intact. On failure, the plugin
+falls back to word truncation.
+
+Both optional helpers (`smartShorten`, `prLinkLlm`) respect an explicit
+`smartShortenModel`. Otherwise V1 uses its configured `small_model`, falling
+back to the host default, and V2 uses the host default. V1 creates a temporary
+child session with tools disabled and attempts deletion after success or
+failure. V2 uses standalone text generation without tools or a persistent
+helper session. Default naming makes no plugin-initiated model calls.
+
+If V1 cannot read its model configuration, helpers use the host default.
+Task instructions remain outside the encoded source text on both hosts.
 
 ## Security
 
+- PR-like URLs on other hosts are ignored by both deterministic parsing and
+  model-assisted extraction.
 - Only `github.com` PR links are fetched. Hosts from untrusted messages are
   never passed to `gh`: `gh` forwards GitHub Enterprise tokens to whatever
   host `GH_HOST` names, so doing so would have exfiltrated the user's tokens
@@ -86,9 +147,10 @@ When enabled, an overlong descriptive part is shortened by a small model through
   characters (bidi overrides, zero-width) before `session.update`, so a
   crafted PR title or model reply can neither inject terminal sequences nor
   spoof how the title displays.
-- The LLM helpers (`smartShorten`, `prLinkLlm`) run in throwaway child
-  sessions with all tools disabled and a fixed system prompt, so a crafted
-  PR title or message cannot turn them into an agent.
+- Model helpers have no tools: V1 uses a tool-disabled child session, while
+  V2 uses standalone text generation. Fixed instructions treat source text
+  as data; V2 encodes that text as a JSON string in the prompt. Inferred PR
+  links are accepted only for `github.com`.
 - The plugin never logs tokens or other secrets.
 
 ## Requirements
@@ -103,7 +165,9 @@ pnpm install
 make check   # lint + type-check + tests
 ```
 
-The vitest suite drives the plugin with a mock opencode client; the PR cases
-make real `gh` calls and need `gh auth login`.
+The Vitest suite exercises both host adapters and the shared lifecycle;
+PR cases make real `gh` calls and need `gh auth login`. Package compatibility
+also requires isolated real-host acceptance runs; see DEPLOYMENT.md. Never
+replace a working V1 installation with V2 just to test the plugin.
 
 See also: [CHANGELOG.md](https://github.com/maximtop/opencode-session-namer/blob/master/CHANGELOG.md), [AGENTS.md](https://github.com/maximtop/opencode-session-namer/blob/master/AGENTS.md), [DEPLOYMENT.md](https://github.com/maximtop/opencode-session-namer/blob/master/DEPLOYMENT.md).

@@ -6,7 +6,7 @@ import type { Plugin } from '@opencode-ai/plugin';
 export type PluginClient = Parameters<Plugin>[0]['client'];
 
 /**
- * Leveled logger bound to the opencode app log.
+ * Leveled operational diagnostics supplied by the host adapter.
  */
 export type LogFn = (
     level: 'info' | 'warn' | 'error',
@@ -25,31 +25,38 @@ export interface PluginConfig {
      * Name shape. Slots: {project}, {agKey}, {title}; empty slots collapse.
      */
     template: string;
+
     /**
      * Prepended to {title} for PR sessions; {number} is the PR number.
      */
     prPrefix: string;
+
     /**
      * Regex for the issue key; an optional capture group selects the key.
      */
     agKeyPattern: string;
+
     /**
      * Titles longer than this get shortened.
      */
     maxLength: number;
+
     /**
      * Shorten overlong titles with an LLM instead of a hard word-cut.
      */
     smartShorten: boolean;
+
     /**
-     * provider/model for shortening; null uses opencode's small_model.
+     * provider/model for both helpers; null uses the host model policy.
      */
     smartShortenModel: string | null;
+
     /**
      * Ask a small model which PR the first message references when no
      * link-shaped text is found.
      */
     prLinkLlm: boolean;
+
     /**
      * Delay after the first user message (or first idle) before renaming.
      */
@@ -64,14 +71,17 @@ export interface SessionInfo {
      * Session id.
      */
     id?: string;
+
     /**
      * Current session title.
      */
     title?: string;
+
     /**
      * Session working directory.
      */
     directory?: string;
+
     /**
      * Parent session id — present on child (sub-agent) sessions.
      */
@@ -86,18 +96,22 @@ export interface PrLink {
      * PR URL origin including scheme, e.g. "https://github.com".
      */
     host: string;
+
     /**
      * Repository owner (user or org).
      */
     owner: string;
+
     /**
      * Repository name.
      */
     repo: string;
+
     /**
      * Pull request number as it appears in the URL.
      */
     number: string;
+
     /**
      * True when parsed from the short owner/repo#N form rather than a URL.
      * Short forms are ambiguous with file references (src/rename.ts#42), so
@@ -115,6 +129,7 @@ export interface ProjectInfo {
      * caller derives the display label.
      */
     name: string;
+
     /**
      * Issue key from the branch, when detectable.
      */
@@ -129,6 +144,7 @@ export interface PrInfo {
      * PR title.
      */
     title: string | null;
+
     /**
      * Head branch name, from gh's headRefName field.
      */
@@ -143,6 +159,7 @@ export interface State {
      * Session id → timestamp of when it was processed.
      */
     processed: Record<string, number>;
+
     /**
      * Session id → the title this plugin applied, kept until the session
      * first goes idle so a late auto-title write can be corrected once.
@@ -158,29 +175,35 @@ export interface TrackedSession {
      * Whether a user message was observed for this session.
      */
     sawUserMessage: boolean;
+
     /**
      * The title the built-in auto-title set, when observed.
      */
     autoTitle: string | undefined;
+
     /**
      * True when the title was set by anything other than the auto-title
      * (manual rename, another tool) — such sessions are never renamed.
      */
     foreign: boolean;
+
     /**
      * Whether a rename has already been scheduled for this session.
      */
     scheduled: boolean;
+
     /**
      * Last title seen in session.updated events.
      */
     lastTitle: string | undefined;
+
     /**
      * Rename attempts that found no user text or failed the title write;
      * past a cap the session is given up so it is not refetched on every
      * idle. A new user message clears it.
      */
     renameAttempts: number;
+
     /**
      * True when the session is a throwaway child session (smartShorten,
      * pr-link extraction) — never scheduled, and never persisted when the
@@ -188,10 +211,12 @@ export interface TrackedSession {
      * backstops children created before the plugin loaded (hot reload).
      */
     child: boolean;
+
     /**
      * True when retries are exhausted; a new user message re-arms the rename.
      */
     givenUp: boolean;
+
     /**
      * Session working directory captured from events — needed to scope
      * session.get on multi-directory servers.
