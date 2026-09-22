@@ -1,4 +1,5 @@
 import type { Plugin } from '@opencode/plugin';
+import { EventType } from './events';
 import { parseModel } from './host';
 import { createLifecycle } from './lifecycle';
 import type { NamingHost, NamingEvent } from './host';
@@ -105,9 +106,9 @@ export function createV2Host(ctx: Plugin.Context): NamingHost {
  */
 export function v2Event(event: V2Event): NamingEvent | undefined {
     switch (event.type) {
-        case 'session.created':
+        case EventType.SessionCreated:
             return {
-                type: 'session.created',
+                type: EventType.SessionCreated,
                 properties: { info: {
                     id: event.data.sessionID,
                     title: event.data.title ?? '',
@@ -115,38 +116,38 @@ export function v2Event(event: V2Event): NamingEvent | undefined {
                     parentID: event.data.parentID,
                 } },
             };
-        case 'session.renamed':
+        case EventType.SessionRenamed:
             return {
-                type: 'session.updated',
+                type: EventType.SessionUpdated,
                 properties: { info: {
                     id: event.data.sessionID,
                     title: event.data.title,
                     directory: event.location?.directory,
                 } },
             };
-        case 'session.deleted':
+        case EventType.SessionDeleted:
             return {
-                type: 'session.deleted',
+                type: EventType.SessionDeleted,
                 properties: { info: { id: event.data.sessionID } },
             };
-        case 'session.inbox.enqueued':
+        case EventType.SessionInboxEnqueued:
             if (event.data.item.type !== 'user') {
                 return undefined;
             }
             return {
-                type: 'message.updated',
+                type: EventType.MessageUpdated,
                 properties: { info: {
                     role: 'user', sessionID: event.data.sessionID,
                 } },
             };
-        case 'session.inbox.delivered':
+        case EventType.SessionInboxDelivered:
             return {
-                type: 'message.ready',
+                type: EventType.MessageReady,
                 properties: { sessionID: event.data.sessionID },
             };
-        case 'session.idle':
+        case EventType.SessionIdle:
             return {
-                type: 'session.idle',
+                type: EventType.SessionIdle,
                 properties: { sessionID: event.data.sessionID },
             };
         default:
@@ -189,10 +190,10 @@ export async function setupV2(
                     continue;
                 }
                 let location: EventLocation | undefined = 'location' in event ? event.location : undefined;
-                if (!location && event.type === 'session.created') {
+                if (!location && event.type === EventType.SessionCreated) {
                     location = event.data.location;
                 }
-                if (!location && event.type !== 'session.deleted') {
+                if (!location && event.type !== EventType.SessionDeleted) {
                     try {
                         const session = await ctx.session.get(
                             { sessionID: id },
@@ -227,7 +228,7 @@ export async function setupV2(
                         host.log('error', 'V2 event handling failed');
                     }
                 });
-                if (event.type === 'session.deleted') {
+                if (event.type === EventType.SessionDeleted) {
                     owned.delete(id);
                     // Keep the sequence tombstone until this instance unloads.
                 }

@@ -1,4 +1,5 @@
 import type { Plugin } from '@opencode-ai/plugin';
+import { EventType } from './events';
 import { messageText } from './messages';
 import { DEFAULT_TITLE_RE } from './tracking';
 import type { NamingHost, NamingEvent, TextRequest } from './host';
@@ -168,24 +169,24 @@ export function v1Event(
     >>[0]['event'],
 ): NamingEvent | undefined {
     switch (event.type) {
-        case 'session.created':
-        case 'session.updated':
-        case 'session.deleted':
+        case EventType.SessionCreated:
+        case EventType.SessionUpdated:
+        case EventType.SessionDeleted:
             return {
                 type: event.type,
                 properties: { info: event.properties.info },
             };
-        case 'message.updated':
+        case EventType.MessageUpdated:
             if (event.properties.info.role !== 'user') {
                 return undefined;
             }
             return {
-                type: 'message.updated',
+                type: EventType.MessageUpdated,
                 properties: { info: {
                     role: 'user', sessionID: event.properties.info.sessionID,
                 } },
             };
-        case 'session.idle':
+        case EventType.SessionIdle:
             return { type: event.type, properties: event.properties };
         default:
             return undefined;

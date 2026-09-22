@@ -9,6 +9,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect, beforeAll } from 'vitest';
 import type { Plugin } from '@opencode-ai/plugin';
+import { EventType } from '../src/events';
 import { createPrLinkExtractor } from '../src/pr-link-llm';
 import { createSmartShorten } from '../src/shorten';
 import { createV2Host, setupV2 } from '../src/host-v2';
@@ -1324,16 +1325,16 @@ it('unavailable original text is skipped once without generation', async () => {
     };
     const hooks = await createLifecycle(host);
     await hooks.event({ event: {
-        type: 'session.created', properties: { info: session },
+        type: EventType.SessionCreated, properties: { info: session },
     } });
     await hooks.event({ event: {
-        type: 'message.updated',
+        type: EventType.MessageUpdated,
         properties: { info: { role: 'user', sessionID: session.id } },
     } });
     await waitFor(() => reads === 1);
     await sleep(100);
     await hooks.event({ event: {
-        type: 'session.idle', properties: { sessionID: session.id },
+        type: EventType.SessionIdle, properties: { sessionID: session.id },
     } });
     await sleep(100);
     expect(reads).toBe(1);
@@ -1359,10 +1360,10 @@ it('disposal prevents a title write after an in-flight read', async () => {
         },
     });
     await hooks.event({ event: {
-        type: 'session.created', properties: { info: session },
+        type: EventType.SessionCreated, properties: { info: session },
     } });
     await hooks.event({ event: {
-        type: 'message.updated',
+        type: EventType.MessageUpdated,
         properties: { info: { role: 'user', sessionID: session.id } },
     } });
     expect(await waitFor(() => started)).toBe(true);
@@ -1379,14 +1380,14 @@ it('deleting a session cancels its scheduled rename', async () => {
     });
     const hooks = await SessionNamer({ client } as Ctx);
     await emit(hooks, {
-        type: 'session.created', properties: { info: session },
+        type: EventType.SessionCreated, properties: { info: session },
     });
     await emit(hooks, {
-        type: 'message.updated',
+        type: EventType.MessageUpdated,
         properties: { info: { role: 'user', sessionID: session.id } },
     });
     await emit(hooks, {
-        type: 'session.deleted', properties: { info: session },
+        type: EventType.SessionDeleted, properties: { info: session },
     });
     await sleep(100);
     expect(updates).toHaveLength(0);
@@ -1573,20 +1574,29 @@ it.each(['v1', 'v2'] as const)(
             ? createV1Host(v1.client) : createV2Host(v2.context);
         const hooks = await createLifecycle(host);
         const send = (event: NamingEvent) => hooks.event({ event });
-        await send({ type: 'session.created', properties: { info: { ...session } } });
         await send({
-            type: 'message.updated',
+            type: EventType.SessionCreated,
+            properties: { info: { ...session } },
+        });
+        await send({
+            type: EventType.MessageUpdated,
             properties: { info: { role: 'user', sessionID: session.id } },
         });
         expect(await waitFor(() => session.title === '[browser-extension] Fix crash'))
             .toBe(true);
-        await send({ type: 'session.idle', properties: { sessionID: session.id } });
+        await send({
+            type: EventType.SessionIdle,
+            properties: { sessionID: session.id },
+        });
         session.title = 'My manual title';
-        await send({ type: 'session.updated', properties: { info: { ...session } } });
+        await send({
+            type: EventType.SessionUpdated,
+            properties: { info: { ...session } },
+        });
         await hooks.dispose();
         const restored = await createLifecycle(host);
         await restored.event({ event: {
-            type: 'session.idle', properties: { sessionID: session.id },
+            type: EventType.SessionIdle, properties: { sessionID: session.id },
         } });
         await sleep(100);
         expect(session.title).toBe('My manual title');
@@ -1614,10 +1624,11 @@ it.each(['v1', 'v2'] as const)(
                 ? createV1Host(v1.client) : createV2Host(v2.context);
             const hooks = await createLifecycle(host);
             await hooks.event({ event: {
-                type: 'session.created', properties: { info: { ...session } },
+                type: EventType.SessionCreated,
+                properties: { info: { ...session } },
             } });
             await hooks.event({ event: {
-                type: 'message.updated',
+                type: EventType.MessageUpdated,
                 properties: { info: { role: 'user', sessionID: session.id } },
             } });
             if (parentID) {
@@ -1669,7 +1680,7 @@ it('every disposal waits for already-started cleanup', async () => {
         },
     });
     await hooks.event({ event: {
-        type: 'message.updated',
+        type: EventType.MessageUpdated,
         properties: { info: { role: 'user', sessionID: session.id } },
     } });
     expect(await waitFor(() => started)).toBe(true);
@@ -1694,7 +1705,7 @@ it('V2 durable replays cannot repeat correction or undo a manual title', async (
     const cleanup = await setupV2(context);
     const location = { directory: session.directory };
     const created = {
-        type: 'session.created',
+        type: EventType.SessionCreated,
         location,
         durable: { seq: 1 },
         data: { sessionID: session.id, location },
@@ -1764,22 +1775,24 @@ it.each(['v1', 'v2'] as const)(
             },
         });
         await hooks.event({ event: {
-            type: 'session.created',
+            type: EventType.SessionCreated,
             properties: { info: {
                 ...session, title: generation === 'v1' ? 'New session' : '',
             } },
         } });
         await hooks.event({ event: {
-            type: 'message.updated',
+            type: EventType.MessageUpdated,
             properties: { info: { role: 'user', sessionID: session.id } },
         } });
         await hooks.event({ event: {
-            type: 'session.updated', properties: { info: { ...session } },
+            type: EventType.SessionUpdated,
+            properties: { info: { ...session } },
         } });
         expect(await waitFor(() => started)).toBe(true);
         session.title = 'Keep this title';
         await hooks.event({ event: {
-            type: 'session.updated', properties: { info: { ...session } },
+            type: EventType.SessionUpdated,
+            properties: { info: { ...session } },
         } });
         release?.();
         await sleep(100);
@@ -1822,17 +1835,17 @@ describe.each(['v1', 'v2'] as const)('%s late correction protection', (generatio
                 },
             });
             const titleEvent = (title: string) => hooks.event({ event: {
-                type: 'session.updated',
+                type: EventType.SessionUpdated,
                 properties: { info: { ...session, title } },
             } });
             const writeCount = () => v1.updates.length + v2.writes.length;
             try {
                 await hooks.event({ event: {
-                    type: 'session.created',
+                    type: EventType.SessionCreated,
                     properties: { info: { ...session } },
                 } });
                 await hooks.event({ event: {
-                    type: 'message.updated',
+                    type: EventType.MessageUpdated,
                     properties: { info: { role: 'user', sessionID: session.id } },
                 } });
                 session.title = 'Auto title';
@@ -1854,12 +1867,12 @@ describe.each(['v1', 'v2'] as const)('%s late correction protection', (generatio
                         await titleEvent(session.title);
                     } else if (interruption === 'idle') {
                         await hooks.event({ event: {
-                            type: 'session.idle',
+                            type: EventType.SessionIdle,
                             properties: { sessionID: session.id },
                         } });
                     } else if (interruption === 'deletion') {
                         await hooks.event({ event: {
-                            type: 'session.deleted',
+                            type: EventType.SessionDeleted,
                             properties: { info: { ...session } },
                         } });
                     } else {
@@ -1915,7 +1928,7 @@ it('V2 processes manual-title events while a correction read is pending', async 
     });
     try {
         push({
-            type: 'session.created',
+            type: EventType.SessionCreated,
             location,
             durable: { seq: 1 },
             data: { sessionID: session.id, location },
@@ -1955,13 +1968,13 @@ it('V2 records a restored compacted session without naming it', async () => {
     ]);
     const hooks = await createLifecycle(createV2Host(context));
     await hooks.event({ event: {
-        type: 'session.idle', properties: { sessionID: session.id },
+        type: EventType.SessionIdle, properties: { sessionID: session.id },
     } });
     await sleep(100);
     await hooks.dispose();
     const restored = await createLifecycle(createV2Host(context));
     await restored.event({ event: {
-        type: 'session.idle', properties: { sessionID: session.id },
+        type: EventType.SessionIdle, properties: { sessionID: session.id },
     } });
     await sleep(100);
     await restored.dispose();
@@ -1989,7 +2002,7 @@ it.each(['v1', 'v2'] as const)(
                 ? createV1Host(v1.client) : createV2Host(v2.context);
             const hooks = await createLifecycle(host);
             await hooks.event({ event: {
-                type: 'message.updated',
+                type: EventType.MessageUpdated,
                 properties: { info: { role: 'user', sessionID: session.id } },
             } });
             await sleep(100);
@@ -2089,20 +2102,20 @@ it('V2 retries failed writes without consuming rename history', async () => {
     const host = createV2Host(context);
     const hooks = await createLifecycle(host);
     await hooks.event({ event: {
-        type: 'message.updated',
+        type: EventType.MessageUpdated,
         properties: { info: { role: 'user', sessionID: session.id } },
     } });
     expect(await waitFor(() => failures === 0)).toBe(true);
     expect(writes).toHaveLength(0);
     await hooks.event({ event: {
-        type: 'session.idle', properties: { sessionID: session.id },
+        type: EventType.SessionIdle, properties: { sessionID: session.id },
     } });
     expect(await waitFor(() => writes.length === 1)).toBe(true);
     expect(session.title).toBe('[browser-extension] Fix crash');
     await hooks.dispose();
     const restored = await createLifecycle(host);
     await restored.event({ event: {
-        type: 'session.idle', properties: { sessionID: session.id },
+        type: EventType.SessionIdle, properties: { sessionID: session.id },
     } });
     await sleep(100);
     expect(writes).toHaveLength(1);
@@ -2139,7 +2152,7 @@ it.each(['v1', 'v2'] as const)(
                 ? createV1Host(v1.client) : createV2Host(v2.context);
             const hooks = await createLifecycle(host);
             await hooks.event({ event: {
-                type: 'message.updated',
+                type: EventType.MessageUpdated,
                 properties: { info: { role: 'user', sessionID: session.id } },
             } });
             const expected = failure
@@ -2174,7 +2187,7 @@ it.each(['v1', 'v2'] as const)(
             ? createV1Host(v1.client) : createV2Host(v2.context);
         const hooks = await createLifecycle(host);
         await hooks.event({ event: {
-            type: 'message.updated',
+            type: EventType.MessageUpdated,
             properties: { info: { role: 'user', sessionID: session.id } },
         } });
         expect(await waitFor(() => session.title
@@ -2250,7 +2263,7 @@ it.each(['v1', 'v2'] as const)(
                 ? createV1Host(v1.client) : createV2Host(v2.context);
             const hooks = await createLifecycle(host);
             await hooks.event({ event: {
-                type: 'message.updated',
+                type: EventType.MessageUpdated,
                 properties: { info: { role: 'user', sessionID: session.id } },
             } });
             expect(await waitFor(() => session.title.startsWith(

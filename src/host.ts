@@ -1,3 +1,4 @@
+import type { EventType } from './events';
 import type { LogFn, SessionInfo } from './types';
 
 /**
@@ -123,7 +124,8 @@ export type NamingEvent =
         /**
          * Session lifecycle notification.
          */
-        type: 'session.created' | 'session.updated' | 'session.deleted';
+        type: `${EventType.SessionCreated | EventType.SessionUpdated
+        | EventType.SessionDeleted}`;
         /**
          * Session fields supplied by the host.
          */
@@ -138,7 +140,7 @@ export type NamingEvent =
         /**
          * A genuine user interaction.
          */
-        type: 'message.updated';
+        type: `${EventType.MessageUpdated}`;
         /**
          * Message provenance supplied by the host.
          */
@@ -162,7 +164,7 @@ export type NamingEvent =
         /**
          * A retry opportunity after message delivery or turn completion.
          */
-        type: 'session.idle' | 'message.ready';
+        type: `${EventType.SessionIdle | EventType.MessageReady}`;
         /**
          * Owning session.
          */

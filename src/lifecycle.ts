@@ -14,6 +14,7 @@
  * initially renamed once, with one bounded late-auto-title correction.
  */
 
+import { EventType } from './events';
 import type { NamingHost, NamingEvent } from './host';
 import { loadConfig } from './config';
 import { loadState, saveState } from './state';
@@ -405,7 +406,7 @@ export const createLifecycle = async (host: NamingHost) => {
             if (eventSessionID && deleted.has(eventSessionID)) {
                 return;
             }
-            if (event.type === 'session.deleted') {
+            if (event.type === EventType.SessionDeleted) {
                 const { id } = event.properties.info;
                 if (id) {
                     deleted.add(id);
@@ -414,12 +415,12 @@ export const createLifecycle = async (host: NamingHost) => {
                 }
                 return;
             }
-            if (event.type === 'message.ready') {
+            if (event.type === EventType.MessageReady) {
                 schedule(event.properties.sessionID);
                 return;
             }
             try {
-                if (event.type === 'session.created') {
+                if (event.type === EventType.SessionCreated) {
                     const info = event.properties?.info;
                     if (info?.id) {
                         const rec = recordFor(info.id);
@@ -431,11 +432,11 @@ export const createLifecycle = async (host: NamingHost) => {
                     }
                     return;
                 }
-                if (event.type === 'session.updated') {
+                if (event.type === EventType.SessionUpdated) {
                     await onSessionUpdated(event.properties?.info);
                     return;
                 }
-                if (event.type === 'message.updated') {
+                if (event.type === EventType.MessageUpdated) {
                     const info = event.properties?.info;
                     if (info?.role === 'user' && info.sessionID) {
                         const rec = recordFor(info.sessionID);
@@ -459,7 +460,7 @@ export const createLifecycle = async (host: NamingHost) => {
                     }
                     return;
                 }
-                if (event.type === 'session.idle') {
+                if (event.type === EventType.SessionIdle) {
                     const sessionID = event.properties?.sessionID;
                     if (sessionID) {
                         await onSessionIdle(sessionID);

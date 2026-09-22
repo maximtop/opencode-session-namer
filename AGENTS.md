@@ -61,6 +61,7 @@ are protected.
 │   ├── index.ts               # preserved V1 plugin factory
 │   ├── server.ts              # automatic dual-host package entry
 │   ├── host.ts                # host contract, events and model selection
+│   ├── events.ts              # shared event names for both host generations
 │   ├── host-v1.ts             # V1 SDK mapping and helper-session cleanup
 │   ├── host-v2.ts             # V2 SDK mapping and event subscription
 │   ├── lifecycle.ts           # shared tracking, timers and cancellation
@@ -214,6 +215,9 @@ inside its adapter rather than duplicating it in each prompt helper.
   variables, PascalCase types; no `I` prefix on interfaces.
 - Imports are relative and extensionless; type-only imports use
   `import type`.
+- Use `EventType` for event names shared by adapters and the lifecycle;
+  derive SDK-compatible discriminator types from it instead of repeating
+  string literals.
 - Do not loosen lint rules to make code pass — fix the code.
 
 ### Testing
