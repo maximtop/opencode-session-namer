@@ -199,40 +199,45 @@ export type NamingEvent =
     };
 
 /**
- * Extracts session ownership from a normalized event.
- * @param event notification consumed by the naming lifecycle
- * @returns session identifier when supplied by the host
+ * Shared representations used by host adapters and the naming lifecycle.
  */
-export function getEventSessionID(event: NamingEvent): string | undefined {
-    if ('info' in event.properties) {
-        const { info } = event.properties;
-        return 'sessionID' in info ? info.sessionID : info.id;
+export class HostProtocol {
+    /**
+     * Extracts session ownership from a normalized event.
+     * @param event notification consumed by the naming lifecycle
+     * @returns session identifier when supplied by the host
+     */
+    static getEventSessionID(event: NamingEvent): string | undefined {
+        if ('info' in event.properties) {
+            const { info } = event.properties;
+            return 'sessionID' in info ? info.sessionID : info.id;
+        }
+        return event.properties.sessionID;
     }
-    return event.properties.sessionID;
-}
 
-/**
- * Keeps task instructions outside the encoded, untrusted source text.
- * @param request fixed task instructions and source data
- * @returns prompt body shared by both host integrations
- */
-export function textPrompt(request: TextRequest): string {
-    return `${request.instructions}\n\nInput JSON string:\n${
-        JSON.stringify(request.data)}`;
-}
-
-/**
- * Parses a configured provider/model without losing slashes in model IDs.
- * @returns model reference or undefined
- * @param ref configured provider/model identifier
- */
-export function parseModel(ref: string | null | undefined) {
-    const separator = ref?.indexOf('/') ?? -1;
-    if (!ref || separator <= 0 || separator === ref.length - 1) {
-        return undefined;
+    /**
+     * Keeps task instructions outside the encoded, untrusted source text.
+     * @param request fixed task instructions and source data
+     * @returns prompt body shared by both host integrations
+     */
+    static textPrompt(request: TextRequest): string {
+        return `${request.instructions}\n\nInput JSON string:\n${
+            JSON.stringify(request.data)}`;
     }
-    return {
-        providerID: ref.slice(0, separator),
-        modelID: ref.slice(separator + 1),
-    };
+
+    /**
+     * Parses a configured provider/model without losing slashes in model IDs.
+     * @returns model reference or undefined
+     * @param ref configured provider/model identifier
+     */
+    static parseModel(ref: string | null | undefined) {
+        const separator = ref?.indexOf('/') ?? -1;
+        if (!ref || separator <= 0 || separator === ref.length - 1) {
+            return undefined;
+        }
+        return {
+            providerID: ref.slice(0, separator),
+            modelID: ref.slice(separator + 1),
+        };
+    }
 }

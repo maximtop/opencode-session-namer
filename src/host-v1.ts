@@ -8,7 +8,7 @@ import type {
 } from './host';
 import type { PluginClient } from './types';
 
-import { parseModel, textPrompt } from './host';
+import { HostProtocol } from './host';
 
 /**
  * Adapts the V1 SDK and owns disposable helper-session operations.
@@ -136,7 +136,7 @@ export class V1Host implements NamingHost {
             }
         }
         signal?.throwIfAborted();
-        const model = parseModel(ref);
+        const model = HostProtocol.parseModel(ref);
         // Let creation settle so an allocated child ID is not lost on abort.
         const child = await this.client.session.create({
             body: { parentID: sessionID, title: request.title },
@@ -156,7 +156,9 @@ export class V1Host implements NamingHost {
                     ...(model ? { model } : {}),
                     system: request.system,
                     tools: V1Host.CHILD_TOOLS_DISABLED,
-                    parts: [{ type: 'text', text: textPrompt(request) }],
+                    parts: [{
+                        type: 'text', text: HostProtocol.textPrompt(request),
+                    }],
                 },
             });
             if (response.error) {

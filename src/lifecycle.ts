@@ -15,7 +15,7 @@
  */
 
 import { EventType } from './events';
-import { getEventSessionID } from './host';
+import { HostProtocol } from './host';
 import { rememberSession } from './session-cache';
 import type { NamingHost, NamingEvent } from './host';
 import { loadConfig } from './config';
@@ -400,7 +400,7 @@ export const createLifecycle = async (host: NamingHost) => {
             if (disposed) {
                 return;
             }
-            const eventSessionID = getEventSessionID(event);
+            const eventSessionID = HostProtocol.getEventSessionID(event);
             if (eventSessionID && deleted.has(eventSessionID)) {
                 return;
             }

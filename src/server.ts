@@ -5,8 +5,8 @@ export default {
     id: 'session-namer',
     server: SessionNamer,
     setup: async (ctx: Plugin.Context) => {
-        const { setupV2 } = await import('./host-v2');
-        return setupV2(ctx);
+        const { V2Host } = await import('./host-v2');
+        return new V2Host(ctx).setup();
     },
 } satisfies Plugin.Plugin & {
     /**

@@ -60,11 +60,11 @@ are protected.
 ├── src/
 │   ├── index.ts               # preserved V1 plugin factory
 │   ├── server.ts              # automatic dual-host package entry
-│   ├── host.ts                # host contract, events and model selection
+│   ├── host.ts                # host contracts and HostProtocol namespace
 │   ├── events.ts              # shared event names for both host generations
 │   ├── session-cache.ts       # bounded transient session/replay evidence
 │   ├── host-v1.ts             # V1Host class and helper-session cleanup
-│   ├── host-v2.ts             # V2 SDK mapping and event subscription
+│   ├── host-v2.ts             # V2Host class and event subscription
 │   ├── lifecycle.ts           # shared tracking, timers and cancellation
 │   ├── rename.ts              # rename orchestration
 │   ├── shorten.ts             # shared title-shortening prompt policy
@@ -190,8 +190,9 @@ This project's boundaries:
   filesystem/configuration, GitHub lookup and persistence.
 - **Pure helpers** — `tracking.ts`, `pr-link.ts`, `text.ts`, `messages.ts`,
   `session-cache.ts`.
-- **Contracts** — `host.ts` defines normalized events and host operations;
-  `types.ts` defines shared data. SDK imports are type-only.
+- **Contracts** — `host.ts` defines host operations, normalized events and
+  the stateless `HostProtocol` namespace; `types.ts` defines shared data.
+  SDK imports are type-only.
 
 `lifecycle.ts` loads configuration and state once per instance. Preserve
 acyclic imports: shared policy depends on contracts and injected operations,
@@ -211,9 +212,11 @@ inside its adapter rather than duplicating it in each prompt helper.
 - Keep transient session/replay caches bounded and release cancellation
   resources when a session is retired. Persistent rename history owns the
   long-term once-only decision.
-- Structure the V1 SDK adapter as a class implementing `NamingHost`; keep
-  adapter-specific pure operations as static methods and bind callbacks that
-  consumers pass separately from the instance.
+- Prefer classes as namespaces for cohesive operations. Use static methods
+  for operations without instance state; keep injected dependencies and
+  mutable state on instances. Preserve host-required function/object exports.
+- Implement SDK adapters as classes satisfying `NamingHost`; bind callbacks
+  that consumers pass separately from the instance.
 - Prefer discriminated-union narrowing over hand-written type guards.
 - Never throw past the plugin boundary: the `event` hook wraps everything in
   try/catch and logs through the host adapter; degraded paths (URL-only naming,
