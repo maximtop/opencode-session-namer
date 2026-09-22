@@ -15,10 +15,12 @@ export interface ChangePatch {
      * Auto-title recognized from the change, if any.
      */
     autoTitle: string | undefined;
+
     /**
      * True when the session title is foreign (never rename).
      */
     foreign: boolean;
+
     /**
      * New last-title baseline.
      */

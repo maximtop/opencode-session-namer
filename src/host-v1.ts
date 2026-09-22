@@ -5,7 +5,7 @@ import { DEFAULT_TITLE_RE } from './tracking';
 import type { NamingHost, NamingEvent, TextRequest } from './host';
 import type { PluginClient } from './types';
 
-import { parseModel } from './host';
+import { parseModel, textPrompt } from './host';
 
 /**
  * Tool lockdown for throwaway child sessions: the prompted text comes from
@@ -43,13 +43,14 @@ async function generateV1Text(
     signal?.throwIfAborted();
     let ref = request.model;
     if (!ref) {
-        const config = await client.config.get({
-            query: { directory }, signal,
-        });
-        if (config.error) {
-            throw new Error('V1 model configuration read failed');
+        try {
+            const config = await client.config.get({
+                query: { directory }, signal,
+            });
+            ref = config.error ? null : config.data?.small_model ?? null;
+        } catch {
+            ref = null;
         }
-        ref = config.data?.small_model ?? null;
     }
     signal?.throwIfAborted();
     const model = parseModel(ref);
@@ -72,7 +73,7 @@ async function generateV1Text(
                 ...(model ? { model } : {}),
                 system: request.system,
                 tools: CHILD_TOOLS_DISABLED,
-                parts: [{ type: 'text', text: request.prompt }],
+                parts: [{ type: 'text', text: textPrompt(request) }],
             },
         });
         if (response.error) {

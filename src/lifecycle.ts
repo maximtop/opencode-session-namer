@@ -15,6 +15,8 @@
  */
 
 import { EventType } from './events';
+import { getEventSessionID } from './host';
+import { rememberSession } from './session-cache';
 import type { NamingHost, NamingEvent } from './host';
 import { loadConfig } from './config';
 import { loadState, saveState } from './state';
@@ -66,7 +68,7 @@ export const createLifecycle = async (host: NamingHost) => {
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
     const controllers = new Map<string, AbortController>();
     const jobs = new Set<Promise<void>>();
-    const deleted = new Set<string>();
+    const deleted = new Map<string, boolean>();
     const correcting = new Set<string>();
     let disposed = false;
 
@@ -364,6 +366,7 @@ export const createLifecycle = async (host: NamingHost) => {
         if (rec.child) {
             // throwaway child sessions are deleted by their owner — drop
             // tracking instead of persisting a processed entry
+            cancelSession(sessionID);
             tracked.delete(sessionID);
             return;
         }
@@ -372,6 +375,7 @@ export const createLifecycle = async (host: NamingHost) => {
             log('info', 'skipping session with a foreign title', {
                 sessionID,
             });
+            cancelSession(sessionID);
             await markProcessed(sessionID);
             tracked.delete(sessionID);
             return;
@@ -396,20 +400,14 @@ export const createLifecycle = async (host: NamingHost) => {
             if (disposed) {
                 return;
             }
-            let eventSessionID: string | undefined;
-            if ('info' in event.properties) {
-                const { info } = event.properties;
-                eventSessionID = 'sessionID' in info ? info.sessionID : info.id;
-            } else {
-                eventSessionID = event.properties.sessionID;
-            }
+            const eventSessionID = getEventSessionID(event);
             if (eventSessionID && deleted.has(eventSessionID)) {
                 return;
             }
             if (event.type === EventType.SessionDeleted) {
                 const { id } = event.properties.info;
                 if (id) {
-                    deleted.add(id);
+                    rememberSession(deleted, id, true);
                     cancelSession(id);
                     tracked.delete(id);
                 }

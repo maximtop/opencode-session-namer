@@ -6,7 +6,7 @@ const GH_HOST = 'https://github.com';
  * Parses one candidate token into a PR link. Tolerates anything after the PR
  * number (trailing path like `/changes`, `/files`, a query or a `#fragment`),
  * markdown emphasis around the link (`**…**`, `_…_`), and accepts both full
- * URLs (`https://host/owner/repo/pull/N…`) and the short `owner/repo#N` form
+ * URLs (`https://github.com/owner/repo/pull/N…`) and the short `owner/repo#N` form
  * (github.com). Short-form matches are flagged so the caller can verify them
  * with gh — `src/rename.ts#42` is a file reference, not a PR.
  * @param raw candidate token
@@ -21,7 +21,7 @@ function parsePrUrlShape(raw: string): PrLink | null {
     );
     if (full) {
         const [, host, owner, repo, number] = full;
-        if (host && owner && repo && number) {
+        if (host === GH_HOST && owner && repo && number) {
             return { host, owner, repo, number };
         }
     }

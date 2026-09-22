@@ -25,7 +25,7 @@ export async function fetchGhPrInfo(
     signal?: AbortSignal,
 ): Promise<PrInfo | null> {
     if (pr.host !== 'https://github.com') {
-        log('warn', 'unsupported PR host, naming from URL only', {
+        log('warn', 'unsupported PR host; skipped', {
             host: pr.host,
             repo: `${pr.owner}/${pr.repo}`,
             number: pr.number,

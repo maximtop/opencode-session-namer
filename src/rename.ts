@@ -37,32 +37,39 @@ interface RenamerDeps {
      * Injected host operations.
      */
     host: NamingHost;
+
     /**
      * Effective plugin configuration.
      */
     config: PluginConfig;
+
     /**
      * Issue key extractor built from the configured pattern.
      */
     extractAgKey: AgKeyExtractor;
+
     /**
      * Operational diagnostics supplied by the host adapter.
      */
     log: LogFn;
+
     /**
      * Rename-once persistence state.
      */
     state: State;
+
     /**
      * Per-session in-memory tracking map.
      */
     tracked: Map<string, TrackedSession>;
+
     /**
      * Marks a session as processed and persists the state file; the applied
      * title is kept until the session first goes idle so a late auto-title
      * write can be corrected once.
      */
     markProcessed: (sessionID: string, appliedTitle?: string) => Promise<void>;
+
     /**
      * Releases the scheduled latch so a later idle can retry.
      */
@@ -77,26 +84,32 @@ interface ComposeInput {
      * Project name as written on disk, e.g. "AdGuardFiltersStats".
      */
     project: string;
+
     /**
      * Issue key or null when none was found.
      */
     agKey: string | null;
+
     /**
      * Structural prefix kept as is (e.g. the PR reference).
      */
     keepPrefix?: string;
+
     /**
      * Descriptive part, shortened when the result is too long.
      */
     desc: string;
+
     /**
      * Session being renamed (smartShorten parent).
      */
     sessionID: string;
+
     /**
      * Working directory for smartShorten.
      */
     directory: string;
+
     /**
      * Cancellation for pending naming work.
      */

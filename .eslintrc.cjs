@@ -66,6 +66,16 @@ module.exports = {
                 ...customRules,
                 indent: 'off',
                 '@typescript-eslint/indent': ['error', 4, { SwitchCase: 1 }],
+                '@typescript-eslint/lines-around-comment': ['error', {
+                    beforeBlockComment: true,
+                    allowBlockStart: true,
+                    allowObjectStart: true,
+                    allowArrayStart: true,
+                    allowClassStart: true,
+                    allowInterfaceStart: true,
+                    allowTypeStart: true,
+                    allowEnumStart: true,
+                }],
                 'jsdoc/require-jsdoc': ['error', {
                     contexts: [
                         'FunctionDeclaration',

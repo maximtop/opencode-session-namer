@@ -9,10 +9,12 @@ export interface SessionScope {
      * Host session identifier.
      */
     sessionID: string;
+
     /**
      * Session directory, when already known from an event.
      */
     directory?: string;
+
     /**
      * Cancellation of pending reads, generation and title writes.
      */
@@ -27,10 +29,12 @@ export interface NamingSession extends SessionInfo {
      * Host session identifier.
      */
     id: string;
+
     /**
      * Empty when the host has not assigned a title.
      */
     title: string;
+
     /**
      * Actual session directory.
      */
@@ -46,6 +50,7 @@ export type FirstUserText =
          * Original user text is available.
          */
         kind: 'text';
+
         /**
          * Text of the earliest genuine user message.
          */
@@ -72,14 +77,22 @@ export interface TextRequest extends SessionScope {
      * Stable helper title used only by V1 child sessions.
      */
     title: string;
+
     /**
      * Fixed instructions separate from source text in V1.
      */
     system: string;
+
     /**
-     * Prepared source prompt; data is not executable instructions.
+     * Task instructions, including output format and length constraints.
      */
-    prompt: string;
+    instructions: string;
+
+    /**
+     * Untrusted source text, encoded separately from task instructions.
+     */
+    data: string;
+
     /**
      * Explicit provider/model setting, or host default selection.
      */
@@ -94,22 +107,27 @@ export interface NamingHost {
      * Writes operational diagnostics without credentials or prompt text.
      */
     log: LogFn;
+
     /**
      * Recognizes only this host's unassigned/default title.
      */
     isDefaultTitle: (title: string) => boolean;
+
     /**
      * Reads current session data; missing data remains retryable.
      */
     getSession: (scope: SessionScope) => Promise<NamingSession | undefined>;
+
     /**
      * Finds original non-synthetic user text or an explicit skip reason.
      */
     firstUserText: (scope: SessionScope) => Promise<FirstUserText>;
+
     /**
      * Reports whether the requested title write succeeded.
      */
     updateTitle: (scope: SessionScope, title: string) => Promise<boolean>;
+
     /**
      * Generates text without allowing tools or modifying the main chat.
      */
@@ -126,6 +144,7 @@ export type NamingEvent =
          */
         type: `${EventType.SessionCreated | EventType.SessionUpdated
         | EventType.SessionDeleted}`;
+
         /**
          * Session fields supplied by the host.
          */
@@ -141,6 +160,7 @@ export type NamingEvent =
          * A genuine user interaction.
          */
         type: `${EventType.MessageUpdated}`;
+
         /**
          * Message provenance supplied by the host.
          */
@@ -153,6 +173,7 @@ export type NamingEvent =
                  * Owning session identifier.
                  */
                 sessionID: string;
+
                 /**
                  * Only genuine user messages are normalized.
                  */
@@ -165,6 +186,7 @@ export type NamingEvent =
          * A retry opportunity after message delivery or turn completion.
          */
         type: `${EventType.SessionIdle | EventType.MessageReady}`;
+
         /**
          * Owning session.
          */
@@ -175,6 +197,29 @@ export type NamingEvent =
             sessionID: string;
         };
     };
+
+/**
+ * Extracts session ownership from a normalized event.
+ * @param event notification consumed by the naming lifecycle
+ * @returns session identifier when supplied by the host
+ */
+export function getEventSessionID(event: NamingEvent): string | undefined {
+    if ('info' in event.properties) {
+        const { info } = event.properties;
+        return 'sessionID' in info ? info.sessionID : info.id;
+    }
+    return event.properties.sessionID;
+}
+
+/**
+ * Keeps task instructions outside the encoded, untrusted source text.
+ * @param request fixed task instructions and source data
+ * @returns prompt body shared by both host integrations
+ */
+export function textPrompt(request: TextRequest): string {
+    return `${request.instructions}\n\nInput JSON string:\n${
+        JSON.stringify(request.data)}`;
+}
 
 /**
  * Parses a configured provider/model without losing slashes in model IDs.

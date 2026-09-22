@@ -1,7 +1,8 @@
 import type { Plugin } from '@opencode/plugin';
 import { EventType } from './events';
-import { parseModel } from './host';
+import { getEventSessionID, parseModel, textPrompt } from './host';
 import { createLifecycle } from './lifecycle';
+import { rememberSession } from './session-cache';
 import type { NamingHost, NamingEvent } from './host';
 
 /**
@@ -18,6 +19,7 @@ interface EventLocation {
      * Absolute directory supplied by the public host API.
      */
     directory: string;
+
     /**
      * Workspace identity, when present on a durable event.
      */
@@ -85,8 +87,7 @@ export function createV2Host(ctx: Plugin.Context): NamingHost {
             request.signal?.throwIfAborted();
             const parsed = parseModel(request.model);
             const result = await ctx.generate.text({
-                prompt: `${request.system}\n\nInput JSON string:\n${
-                    JSON.stringify(request.prompt)}`,
+                prompt: `${request.system}\n\n${textPrompt(request)}`,
                 ...(parsed ? { model: {
                     providerID: parsed.providerID, id: parsed.modelID,
                 } } : {}),
@@ -154,6 +155,7 @@ export function v2Event(event: V2Event): NamingEvent | undefined {
             return undefined;
     }
 }
+
 /**
  * Owns one V2 event subscription and releases all naming work on unload.
  * @param ctx injected V2 plugin context
@@ -165,8 +167,7 @@ export async function setupV2(
     const host = createV2Host(ctx);
     const lifecycle = await createLifecycle(host);
     const controller = new AbortController();
-    const owned = new Set<string>();
-    const revisions = new Map<string, number>();
+    const knownSessions = new Map<string, number | undefined>();
     const stream = ctx.event.subscribe({ signal: controller.signal });
     const pump = (async () => {
         try {
@@ -178,14 +179,7 @@ export async function setupV2(
                 if (!normalized) {
                     continue;
                 }
-                let id: string | undefined;
-                const props = normalized.properties;
-                if ('info' in props) {
-                    id = 'sessionID' in props.info
-                        ? props.info.sessionID : props.info.id;
-                } else {
-                    id = props.sessionID;
-                }
+                const id = getEventSessionID(normalized);
                 if (!id) {
                     continue;
                 }
@@ -193,7 +187,8 @@ export async function setupV2(
                 if (!location && event.type === EventType.SessionCreated) {
                     location = event.data.location;
                 }
-                if (!location && event.type !== EventType.SessionDeleted) {
+                if (!location && !knownSessions.has(id)
+                    && event.type !== EventType.SessionDeleted) {
                     try {
                         const session = await ctx.session.get(
                             { sessionID: id },
@@ -207,19 +202,22 @@ export async function setupV2(
                 const matches = location
                     ? location.directory === ctx.location.directory
                         && location.workspaceID === ctx.location.workspaceID
-                    : owned.has(id);
+                    : knownSessions.has(id);
                 if (!matches) {
                     continue;
                 }
                 const sequence = 'durable' in event
                     ? event.durable.seq : undefined;
                 if (sequence !== undefined) {
-                    if (sequence <= (revisions.get(id) ?? -1)) {
+                    if (sequence <= (knownSessions.get(id) ?? -1)) {
                         continue;
                     }
-                    revisions.set(id, sequence);
                 }
-                owned.add(id);
+                rememberSession(
+                    knownSessions,
+                    id,
+                    sequence ?? knownSessions.get(id),
+                );
                 // Start events in stream order without blocking newer title
                 // or cancellation evidence on a pending correction read.
                 // The lifecycle owns and drains its asynchronous title work.
@@ -228,10 +226,6 @@ export async function setupV2(
                         host.log('error', 'V2 event handling failed');
                     }
                 });
-                if (event.type === EventType.SessionDeleted) {
-                    owned.delete(id);
-                    // Keep the sequence tombstone until this instance unloads.
-                }
             }
         } catch {
             if (!controller.signal.aborted) {
@@ -243,7 +237,6 @@ export async function setupV2(
         controller.abort();
         await lifecycle.dispose();
         await pump;
-        owned.clear();
-        revisions.clear();
+        knownSessions.clear();
     };
 }

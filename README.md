@@ -36,6 +36,10 @@ Pending naming is cancelled when a session is deleted or the plugin is
 unloaded. A title whose auto-title provenance was not observed remains
 protected; the existing early-manual-title ambiguity is unchanged.
 
+Transient ownership and replay caches retain at most 1,024 recent sessions
+per plugin instance. Retained rename history still uses the existing state
+file and 30-day retention.
+
 ## Install
 
 One package supports both host generations automatically. Verified with
@@ -128,8 +132,13 @@ child session with tools disabled and attempts deletion after success or
 failure. V2 uses standalone text generation without tools or a persistent
 helper session. Default naming makes no plugin-initiated model calls.
 
+If V1 cannot read its model configuration, helpers use the host default.
+Task instructions remain outside the encoded source text on both hosts.
+
 ## Security
 
+- PR-like URLs on other hosts are ignored by both deterministic parsing and
+  model-assisted extraction.
 - Only `github.com` PR links are fetched. Hosts from untrusted messages are
   never passed to `gh`: `gh` forwards GitHub Enterprise tokens to whatever
   host `GH_HOST` names, so doing so would have exfiltrated the user's tokens

@@ -62,6 +62,7 @@ are protected.
 │   ├── server.ts              # automatic dual-host package entry
 │   ├── host.ts                # host contract, events and model selection
 │   ├── events.ts              # shared event names for both host generations
+│   ├── session-cache.ts       # bounded transient session/replay evidence
 │   ├── host-v1.ts             # V1 SDK mapping and helper-session cleanup
 │   ├── host-v2.ts             # V2 SDK mapping and event subscription
 │   ├── lifecycle.ts           # shared tracking, timers and cancellation
@@ -187,7 +188,8 @@ This project's boundaries:
   never import an adapter or either SDK.
 - **Integrations** — `project.ts`, `github.ts`, `config.ts`, `state.ts` own
   filesystem/configuration, GitHub lookup and persistence.
-- **Pure helpers** — `tracking.ts`, `pr-link.ts`, `text.ts`, `messages.ts`.
+- **Pure helpers** — `tracking.ts`, `pr-link.ts`, `text.ts`, `messages.ts`,
+  `session-cache.ts`.
 - **Contracts** — `host.ts` defines normalized events and host operations;
   `types.ts` defines shared data. SDK imports are type-only.
 
@@ -202,6 +204,13 @@ inside its adapter rather than duplicating it in each prompt helper.
 - No one-line `if` statements — always braces with a multiline body.
 - Async `node:fs/promises` everywhere; no sync fs calls.
 - JSDoc on non-trivial functions with `@param`/`@returns`.
+- Separate a property's JSDoc from the preceding property with a blank line;
+  ESLint enforces the spacing and allows the first comment in a type body.
+- Keep helper task instructions separate from untrusted source data; encode
+  only the source text when composing model prompts.
+- Keep transient session/replay caches bounded and release cancellation
+  resources when a session is retired. Persistent rename history owns the
+  long-term once-only decision.
 - Prefer discriminated-union narrowing over hand-written type guards.
 - Never throw past the plugin boundary: the `event` hook wraps everything in
   try/catch and logs through the host adapter; degraded paths (URL-only naming,
