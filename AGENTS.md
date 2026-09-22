@@ -63,7 +63,7 @@ are protected.
 │   ├── host.ts                # host contract, events and model selection
 │   ├── events.ts              # shared event names for both host generations
 │   ├── session-cache.ts       # bounded transient session/replay evidence
-│   ├── host-v1.ts             # V1 SDK mapping and helper-session cleanup
+│   ├── host-v1.ts             # V1Host class and helper-session cleanup
 │   ├── host-v2.ts             # V2 SDK mapping and event subscription
 │   ├── lifecycle.ts           # shared tracking, timers and cancellation
 │   ├── rename.ts              # rename orchestration
@@ -211,6 +211,9 @@ inside its adapter rather than duplicating it in each prompt helper.
 - Keep transient session/replay caches bounded and release cancellation
   resources when a session is retired. Persistent rename history owns the
   long-term once-only decision.
+- Structure the V1 SDK adapter as a class implementing `NamingHost`; keep
+  adapter-specific pure operations as static methods and bind callbacks that
+  consumers pass separately from the instance.
 - Prefer discriminated-union narrowing over hand-written type guards.
 - Never throw past the plugin boundary: the `event` hook wraps everything in
   try/catch and logs through the host adapter; degraded paths (URL-only naming,

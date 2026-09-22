@@ -8,14 +8,14 @@ import { promises as fsp } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import type { Plugin } from '@opencode-ai/plugin';
 import { EventType } from '../src/events';
 import { createPrLinkExtractor } from '../src/pr-link-llm';
 import { createSmartShorten } from '../src/shorten';
 import { createV2Host, setupV2 } from '../src/host-v2';
-import { createV1Host } from '../src/host-v1';
-import type { NamingHost, NamingEvent } from '../src/host';
+import { V1Host } from '../src/host-v1';
+import type { NamingEvent } from '../src/host';
 import { createLifecycle } from '../src/lifecycle';
 import type {
     PluginClient,
@@ -1285,7 +1285,7 @@ it('V1 host reads original text and reports failed writes', async () => {
         userTexts: ['original request', 'later request'],
         failUpdates: 1,
     });
-    const host = createV1Host(client);
+    const host = new V1Host(client);
     const scope = { sessionID: session.id, directory: session.directory };
     expect(await host.firstUserText(scope)).toEqual({
         kind: 'text', text: 'original request',
@@ -1306,7 +1306,7 @@ it('V1 helper deletes its child after success or prompt failure', async () => {
                 throw new Error('provider unavailable');
             };
         }
-        const result = createV1Host(client).generateText({
+        const result = new V1Host(client).generateText({
             sessionID: session.id,
             directory: session.directory,
             title: 'session-namer: shorten',
@@ -1331,13 +1331,11 @@ it('unavailable original text is skipped once without generation', async () => {
         session, firstUserText: 'later message',
     });
     let reads = 0;
-    const host: NamingHost = {
-        ...createV1Host(client),
-        firstUserText: async () => {
-            reads += 1;
-            return { kind: 'unavailable' };
-        },
-    };
+    const host = new V1Host(client);
+    vi.spyOn(host, 'firstUserText').mockImplementation(async () => {
+        reads += 1;
+        return { kind: 'unavailable' };
+    });
     const hooks = await createLifecycle(host);
     await hooks.event({ event: {
         type: EventType.SessionCreated, properties: { info: session },
@@ -1365,15 +1363,14 @@ it('disposal prevents a title write after an in-flight read', async () => {
     let release: (() => void) | undefined;
     let started = false;
     const blocked = new Promise<void>((resolve) => { release = resolve; });
-    const base = createV1Host(client);
-    const hooks = await createLifecycle({
-        ...base,
-        getSession: async (scope) => {
-            started = true;
-            await blocked;
-            return base.getSession(scope);
-        },
+    const base = new V1Host(client);
+    const getSession = base.getSession.bind(base);
+    vi.spyOn(base, 'getSession').mockImplementation(async (scope) => {
+        started = true;
+        await blocked;
+        return getSession(scope);
     });
+    const hooks = await createLifecycle(base);
     await hooks.event({ event: {
         type: EventType.SessionCreated, properties: { info: session },
     } });
@@ -1588,7 +1585,7 @@ it.each(['v1', 'v2'] as const)(
             { type: 'user', text: 'Fix crash', time: { created: 1 } },
         ]);
         const host = generation === 'v1'
-            ? createV1Host(v1.client) : createV2Host(v2.context);
+            ? new V1Host(v1.client) : createV2Host(v2.context);
         const hooks = await createLifecycle(host);
         const send = (event: NamingEvent) => hooks.event({ event });
         await send({
@@ -1638,7 +1635,7 @@ it.each(['v1', 'v2'] as const)(
                 { type: 'user', text: 'Fix worktree', time: { created: 1 } },
             ]);
             const host = generation === 'v1'
-                ? createV1Host(v1.client) : createV2Host(v2.context);
+                ? new V1Host(v1.client) : createV2Host(v2.context);
             const hooks = await createLifecycle(host);
             await hooks.event({ event: {
                 type: EventType.SessionCreated,
@@ -1684,18 +1681,17 @@ it('V2 ignores events belonging to another directory', async () => {
 it('every disposal waits for already-started cleanup', async () => {
     const session = freshSession();
     const { client, updates } = makeClient({ session, firstUserText: 'Fix' });
-    const base = createV1Host(client);
+    const base = new V1Host(client);
     let release: (() => void) | undefined;
     let started = false;
     const blocked = new Promise<void>((resolve) => { release = resolve; });
-    const hooks = await createLifecycle({
-        ...base,
-        firstUserText: async (scope) => {
-            started = true;
-            await blocked;
-            return base.firstUserText(scope);
-        },
+    const firstUserText = base.firstUserText.bind(base);
+    vi.spyOn(base, 'firstUserText').mockImplementation(async (scope) => {
+        started = true;
+        await blocked;
+        return firstUserText(scope);
     });
+    const hooks = await createLifecycle(base);
     await hooks.event({ event: {
         type: EventType.MessageUpdated,
         properties: { info: { role: 'user', sessionID: session.id } },
@@ -1779,18 +1775,17 @@ it.each(['v1', 'v2'] as const)(
             { type: 'user', text: 'Fix crash', time: { created: 1 } },
         ]);
         const base = generation === 'v1'
-            ? createV1Host(v1.client) : createV2Host(v2.context);
+            ? new V1Host(v1.client) : createV2Host(v2.context);
         let release: (() => void) | undefined;
         let started = false;
         const blocked = new Promise<void>((resolve) => { release = resolve; });
-        const hooks = await createLifecycle({
-            ...base,
-            firstUserText: async (scope) => {
-                started = true;
-                await blocked;
-                return base.firstUserText(scope);
-            },
+        const firstUserText = base.firstUserText.bind(base);
+        vi.spyOn(base, 'firstUserText').mockImplementation(async (scope) => {
+            started = true;
+            await blocked;
+            return firstUserText(scope);
         });
+        const hooks = await createLifecycle(base);
         await hooks.event({ event: {
             type: EventType.SessionCreated,
             properties: { info: {
@@ -1833,24 +1828,23 @@ describe.each(['v1', 'v2'] as const)('%s late correction protection', (generatio
                 { type: 'user', text: 'Fix crash', time: { created: 1 } },
             ]);
             const base = generation === 'v1'
-                ? createV1Host(v1.client) : createV2Host(v2.context);
+                ? new V1Host(v1.client) : createV2Host(v2.context);
             let holdRead = false;
             let readStarted = false;
             let release: (() => void) | undefined;
             const pending = new Promise<void>((resolve) => {
                 release = resolve;
             });
-            const hooks = await createLifecycle({
-                ...base,
-                getSession: async (scope) => {
-                    const snapshot = await base.getSession(scope);
-                    if (holdRead) {
-                        readStarted = true;
-                        await pending;
-                    }
-                    return snapshot;
-                },
+            const getSession = base.getSession.bind(base);
+            vi.spyOn(base, 'getSession').mockImplementation(async (scope) => {
+                const snapshot = await getSession(scope);
+                if (holdRead) {
+                    readStarted = true;
+                    await pending;
+                }
+                return snapshot;
             });
+            const hooks = await createLifecycle(base);
             const titleEvent = (title: string) => hooks.event({ event: {
                 type: EventType.SessionUpdated,
                 properties: { info: { ...session, title } },
@@ -2016,7 +2010,7 @@ it.each(['v1', 'v2'] as const)(
                 { type: 'user', text, time: { created: 1 } },
             ]);
             const host = generation === 'v1'
-                ? createV1Host(v1.client) : createV2Host(v2.context);
+                ? new V1Host(v1.client) : createV2Host(v2.context);
             const hooks = await createLifecycle(host);
             await hooks.event({ event: {
                 type: EventType.MessageUpdated,
@@ -2036,7 +2030,7 @@ it('V1 helper sends fixed instructions and disables tools', async () => {
     const { client, childCalls } = makeClient({
         session, firstUserText: 'source',
     });
-    await createV1Host(client).generateText({
+    await new V1Host(client).generateText({
         sessionID: session.id,
         directory: session.directory,
         title: 'session-namer: shorten',
@@ -2089,7 +2083,7 @@ it('V1 helper cancellation during model lookup prevents child creation', async (
             return { data: { small_model: 'fixture/model' } };
         },
     });
-    await expect(createV1Host(client).generateText({
+    await expect(new V1Host(client).generateText({
         sessionID: session.id,
         title: 'helper',
         system: 'Fixed',
@@ -2168,7 +2162,7 @@ it.each(['v1', 'v2'] as const)(
                 },
             });
             const host = generation === 'v1'
-                ? createV1Host(v1.client) : createV2Host(v2.context);
+                ? new V1Host(v1.client) : createV2Host(v2.context);
             const hooks = await createLifecycle(host);
             await hooks.event({ event: {
                 type: EventType.MessageUpdated,
@@ -2203,7 +2197,7 @@ it.each(['v1', 'v2'] as const)(
             text: async () => ({ text: reply }),
         });
         const host = generation === 'v1'
-            ? createV1Host(v1.client) : createV2Host(v2.context);
+            ? new V1Host(v1.client) : createV2Host(v2.context);
         const hooks = await createLifecycle(host);
         await hooks.event({ event: {
             type: EventType.MessageUpdated,
@@ -2228,7 +2222,7 @@ it('V1 helper reports cleanup failure without logging provider input', async () 
     Object.assign(client.session, {
         delete: async () => ({ error: { message: 'credential=secret' } }),
     });
-    await expect(createV1Host(client).generateText({
+    await expect(new V1Host(client).generateText({
         sessionID: session.id,
         title: 'helper',
         system: 'Fixed',
@@ -2247,7 +2241,7 @@ it('V1 helper reports cleanup failure without logging provider input', async () 
 it('V1 helper preserves explicit model IDs and otherwise uses small_model', async () => {
     const session = freshSession();
     const { client, childCalls } = makeClient({ session, firstUserText: 'Fix' });
-    const host = createV1Host(client);
+    const host = new V1Host(client);
     const request = {
         sessionID: session.id, title: 'helper', system: 'Fixed', instructions: 'Return text only.', data: 'data',
     };
@@ -2280,7 +2274,7 @@ it.each(['v1', 'v2'] as const)(
                 { type: 'user', text, time: { created: 1 } },
             ], url);
             const host = generation === 'v1'
-                ? createV1Host(v1.client) : createV2Host(v2.context);
+                ? new V1Host(v1.client) : createV2Host(v2.context);
             const hooks = await createLifecycle(host);
             await hooks.event({ event: {
                 type: EventType.MessageUpdated,
@@ -2335,7 +2329,7 @@ it.each(['error response', 'rejection'])(
             }
             return { error: { message: 'config unavailable' } };
         } });
-        await expect(createV1Host(client).generateText({
+        await expect(new V1Host(client).generateText({
             sessionID: session.id,
             title: 'helper',
             system: 'Fixed',
@@ -2405,18 +2399,17 @@ it('retiring a foreign session aborts its outstanding naming read', async () => 
     await writeConfig({});
     const session = freshSession();
     const { client, updates } = makeClient({ session, firstUserText: 'Fix' });
-    const base = createV1Host(client);
+    const base = new V1Host(client);
     let signal: AbortSignal | undefined;
     let release: (() => void) | undefined;
     const pending = new Promise<void>((resolve) => { release = resolve; });
-    const hooks = await createLifecycle({
-        ...base,
-        getSession: async (scope) => {
-            signal = scope.signal;
-            await pending;
-            return base.getSession(scope);
-        },
+    const getSession = base.getSession.bind(base);
+    vi.spyOn(base, 'getSession').mockImplementation(async (scope) => {
+        signal = scope.signal;
+        await pending;
+        return getSession(scope);
     });
+    const hooks = await createLifecycle(base);
     try {
         await hooks.event({ event: {
             type: EventType.SessionCreated,

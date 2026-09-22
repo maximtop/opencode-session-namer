@@ -1,5 +1,5 @@
 import type { Plugin } from '@opencode-ai/plugin';
-import { createV1Host, v1Event } from './host-v1';
+import { V1Host } from './host-v1';
 import { createLifecycle } from './lifecycle';
 
 /**
@@ -9,12 +9,12 @@ import { createLifecycle } from './lifecycle';
  * @param root0.client injected V1 SDK client
  */
 export const SessionNamer: Plugin = async ({ client }) => {
-    const host = createV1Host(client);
+    const host = new V1Host(client);
     const lifecycle = await createLifecycle(host);
     return {
         dispose: lifecycle.dispose,
         event: async ({ event }) => {
-            const normalized = v1Event(event);
+            const normalized = V1Host.normalizeEvent(event);
             if (normalized) {
                 await lifecycle.event({ event: normalized });
             }
