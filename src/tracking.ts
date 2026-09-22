@@ -41,11 +41,14 @@ export interface ChangePatch {
  * is indistinguishable from the auto-title and gets replaced once.
  * @param rec tracked session state
  * @param newTitle title reported by a session.updated event
+ * @param isDefaultTitle host-specific recognition of an unassigned title
  * @returns updated tracking fields
  */
 export function classifyTitleChange(
     rec: TrackedSession,
     newTitle: string,
+    isDefaultTitle: (title: string) => boolean =
+    (title) => DEFAULT_TITLE_RE.test(title),
 ): ChangePatch {
     if (rec.lastTitle === undefined) {
         return {
@@ -62,12 +65,12 @@ export function classifyTitleChange(
         };
     }
     let { autoTitle, foreign } = rec;
-    const bothDefault = DEFAULT_TITLE_RE.test(rec.lastTitle)
-        && DEFAULT_TITLE_RE.test(newTitle);
+    const bothDefault = isDefaultTitle(rec.lastTitle)
+        && isDefaultTitle(newTitle);
     if (!rec.sawUserMessage && !bothDefault) {
         // titled before any user message (picker / manual)
         foreign = true;
-    } else if (autoTitle === undefined && !DEFAULT_TITLE_RE.test(newTitle)) {
+    } else if (autoTitle === undefined && !isDefaultTitle(newTitle)) {
         // first change after the first user message = the built-in auto-title
         autoTitle = newTitle;
     } else if (autoTitle !== undefined && newTitle !== autoTitle) {

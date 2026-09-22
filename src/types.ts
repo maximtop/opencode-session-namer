@@ -6,7 +6,7 @@ import type { Plugin } from '@opencode-ai/plugin';
 export type PluginClient = Parameters<Plugin>[0]['client'];
 
 /**
- * Leveled logger bound to the opencode app log.
+ * Leveled operational diagnostics supplied by the host adapter.
  */
 export type LogFn = (
     level: 'info' | 'warn' | 'error',
@@ -42,7 +42,7 @@ export interface PluginConfig {
      */
     smartShorten: boolean;
     /**
-     * provider/model for shortening; null uses opencode's small_model.
+     * provider/model for both helpers; null uses the host model policy.
      */
     smartShortenModel: string | null;
     /**
