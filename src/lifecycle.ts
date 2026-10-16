@@ -3,7 +3,11 @@
  *
  * What it does, once per session, right after the first user message:
  * - PR link in the first message → [<repo>] [<key>] Review pull/<N> <title>
- * - otherwise, inside a git project → [<project>] [<key>] <auto-title>
+ * - otherwise, in a project directory → [<project>] [<key>] <auto-title>.
+ * A session inside a git checkout is labeled by the repo, a session in a
+ * plain directory by the directory basename. The issue key comes from the
+ * branch when there is one; the home directory and the filesystem root
+ * keep the auto-title.
  *
  * The issue key (e.g. AG-123) comes from the PR branch/title or the branch
  * recorded in `.git/HEAD` — no issue-tracker API calls. Linked worktrees are

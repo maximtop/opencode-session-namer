@@ -5,10 +5,10 @@ import type { Plugin as PluginV2 } from '@opencode/plugin';
  * PR cases make real `gh` calls (needs `gh auth login`).
  */
 import { promises as fsp } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import type { Plugin } from '@opencode-ai/plugin';
 import { EventType } from '../src/events';
 import { createPrLinkExtractor } from '../src/pr-link-llm';
@@ -42,22 +42,56 @@ type Hooks = NonNullable<Awaited<ReturnType<Plugin>>>;
 type Ctx = Parameters<Plugin>[0];
 
 // Portable fixtures: plain git projects (one on a keyed branch, one
-// branchless) and a linked-worktree pair. They live next to this file (not
-// in tmp) because the plugin deliberately ignores sessions whose directory
-// is inside a temp/scratch location.
+// branchless), a linked-worktree pair, a symlinked `.git` entry, and a
+// directory with no `.git` at all. They live in `.test-fixtures/` inside
+// the checkout (not in tmp: sessions in temp/scratch locations are
+// ignored). `homedir()` is mocked to that directory, so the plugin's walk
+// up to the nearest `.git` stops there instead of reaching this repo.
+vi.mock('node:os', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('node:os')>();
+    const path = await import('node:path');
+    const url = await import('node:url');
+    const fixturesHome = path.join(
+        path.dirname(path.dirname(url.fileURLToPath(import.meta.url))),
+        '.test-fixtures',
+    );
+    const mocked = { ...actual, homedir: () => fixturesHome };
+    return { ...mocked, default: mocked };
+});
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const fixtures = join(repoRoot, '.test-fixtures');
 const gitProject = join(fixtures, 'browser-extension');
 const keyedProject = join(fixtures, 'keyed-project');
 const camelProject = join(fixtures, 'CamelProject');
+const nonGitDir = join(fixtures, 'non-git-directory');
+const symlinkProject = join(fixtures, 'symlinked-git');
 const mainRepo = join(fixtures, 'MainRepo');
 const wtGitdir = join(mainRepo, '.git', 'worktrees', 'fix-AG-56856');
 const worktree = join(fixtures, 'wt', 'fix-AG-56856');
+// Windows without Developer Mode or admin rights cannot create symlinks;
+// the symlink test runs only when the fixture is in place.
+let symlinkSupported = false;
 
 beforeAll(async () => {
+    // start clean: a leftover symlink from an interrupted run would make
+    // the symlink fixture fail and skip its test
+    await fsp.rm(fixtures, { recursive: true, force: true });
     await fsp.mkdir(join(gitProject, '.git'), { recursive: true });
     await fsp.mkdir(join(keyedProject, '.git'), { recursive: true });
     await fsp.mkdir(join(camelProject, '.git'), { recursive: true });
+    await fsp.mkdir(nonGitDir, { recursive: true });
+    await fsp.mkdir(join(gitProject, 'sub'), { recursive: true });
+    await fsp.mkdir(join(symlinkProject, 'git-dir'), { recursive: true });
+    await fsp.writeFile(
+        join(symlinkProject, 'git-dir', 'HEAD'),
+        'ref: refs/heads/feature/AG-4242\n',
+    );
+    try {
+        await fsp.symlink('git-dir', join(symlinkProject, '.git'));
+        symlinkSupported = true;
+    } catch {
+        // the symlink fixture is unavailable: the test below is skipped
+    }
     await fsp.writeFile(
         join(keyedProject, '.git', 'HEAD'),
         'ref: refs/heads/feature/AG-12345\n',
@@ -66,6 +100,10 @@ beforeAll(async () => {
     await fsp.writeFile(join(wtGitdir, 'HEAD'), 'ref: refs/heads/fix/AG-56856\n');
     await fsp.mkdir(worktree, { recursive: true });
     await fsp.writeFile(join(worktree, '.git'), `gitdir: ${wtGitdir}\n`);
+});
+
+afterAll(async () => {
+    await fsp.rm(fixtures, { recursive: true, force: true });
 });
 
 /**
@@ -507,6 +545,52 @@ describe('session-namer', () => {
         );
     });
 
+    it('follows a symlinked .git entry', async ({ skip }) => {
+        skip(!symlinkSupported, 'symlinks are unavailable on this system');
+        await writeConfig({});
+        const session = freshSession({ directory: symlinkProject });
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: 'fix it',
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await drive(hooks, session, { autoTitle: 'Fixing the flaky test', updates });
+        expect(updates).toHaveLength(1);
+        expect(updates[0]?.body.title).toBe(
+            '[symlinked-git] AG-4242 Fixing the flaky test',
+        );
+    });
+
+    it('prefixes sessions in a non-git directory', async () => {
+        await writeConfig({});
+        const session = freshSession({ directory: nonGitDir });
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: 'fix it',
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await drive(hooks, session, { autoTitle: 'Fixing the flaky test', updates });
+        expect(updates).toHaveLength(1);
+        expect(updates[0]?.body.title).toBe(
+            '[non-git-directory] Fixing the flaky test',
+        );
+    });
+
+    it('walks up from a subdirectory to the git project root', async () => {
+        await writeConfig({});
+        const session = freshSession({ directory: join(gitProject, 'sub') });
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: 'fix it',
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await drive(hooks, session, { autoTitle: 'Fixing the flaky test', updates });
+        expect(updates).toHaveLength(1);
+        expect(updates[0]?.body.title).toBe(
+            '[browser-extension] Fixing the flaky test',
+        );
+    });
+
     it('retries the rename when the title write fails', async () => {
         await writeConfig({});
         const session = freshSession({ directory: gitProject });
@@ -586,6 +670,101 @@ describe('session-namer', () => {
         });
         expect(updates).toHaveLength(0);
     });
+
+    // POSIX temp literals cannot be scratch paths on Windows: `resolve`
+    // prefixes them with the current drive, so they exercise nothing there.
+    it.skipIf(process.platform === 'win32').each([
+        '/tmp',
+        '/var/tmp',
+        '/private/tmp/session-namer-test',
+        '/private/var/folders/xy/T/session-namer-test',
+    ])('leaves scratch temp dir %s alone', async (directory) => {
+        await writeConfig({});
+        const session = freshSession({ directory });
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: 'hi there',
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await drive(hooks, session, {
+            autoTitle: 'Joke request',
+            updates,
+            expectUpdate: false,
+        });
+        expect(updates).toHaveLength(0);
+    });
+
+    it('leaves a session in the system temp dir alone', async () => {
+        await writeConfig({});
+        const session = freshSession({
+            directory: join(tmpdir(), 'session-namer-test'),
+        });
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: 'hi there',
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await drive(hooks, session, {
+            autoTitle: 'Joke request',
+            updates,
+            expectUpdate: false,
+        });
+        expect(updates).toHaveLength(0);
+    });
+
+    it('leaves a session in the filesystem root alone', async () => {
+        await writeConfig({});
+        const session = freshSession({ directory: '/' });
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: 'hi there',
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await drive(hooks, session, {
+            autoTitle: 'Joke request',
+            updates,
+            expectUpdate: false,
+        });
+        expect(updates).toHaveLength(0);
+    });
+
+    it('leaves a session in the home directory alone', async () => {
+        await writeConfig({});
+        const session = freshSession({ directory: homedir() });
+        const { client, updates } = makeClient({
+            session,
+            firstUserText: 'hi there',
+        });
+        const hooks = await SessionNamer({ client } as Ctx);
+        await drive(hooks, session, {
+            autoTitle: 'Joke request',
+            updates,
+            expectUpdate: false,
+        });
+        expect(updates).toHaveLength(0);
+    });
+
+    // `/usr` sits outside the (mocked) home and has no `.git` up to the
+    // root, while the test process runs inside this repo: the walk must
+    // stop at `/` instead of resolving `.git` against the process cwd.
+    it.skipIf(process.platform === 'win32')(
+        'labels a non-git directory outside home by its name',
+        async () => {
+            await writeConfig({});
+            const session = freshSession({ directory: '/usr' });
+            const { client, updates } = makeClient({
+                session,
+                firstUserText: 'fix it',
+            });
+            const hooks = await SessionNamer({ client } as Ctx);
+            await drive(hooks, session, {
+                autoTitle: 'Fixing the flaky test',
+                updates,
+            });
+            expect(updates).toHaveLength(1);
+            expect(updates[0]?.body.title).toBe('[usr] Fixing the flaky test');
+        },
+    );
 
     it('renames exactly once even across later idles', async () => {
         await writeConfig({});
@@ -1654,6 +1833,32 @@ it.each(['v1', 'v2'] as const)(
             }
             await hooks.dispose();
         }
+    },
+);
+
+it.each(['v1', 'v2'] as const)(
+    '%s names a non-git directory by its basename',
+    async (generation) => {
+        await writeConfig({});
+        const session = freshSession({
+            directory: nonGitDir,
+            title: generation === 'v1' ? 'New session - fixture' : '',
+        });
+        const v1 = makeClient({ session, firstUserText: 'Fix crash' });
+        const v2 = makeV2Context(session, [
+            { type: 'user', text: 'Fix crash', time: { created: 1 } },
+        ]);
+        const host = generation === 'v1'
+            ? new V1Host(v1.client) : new V2Host(v2.context);
+        const hooks = await createLifecycle(host);
+        await hooks.event({ event: {
+            type: EventType.MessageUpdated,
+            properties: { info: { role: 'user', sessionID: session.id } },
+        } });
+        expect(await waitFor(
+            () => session.title === '[non-git-directory] Fix crash',
+        )).toBe(true);
+        await hooks.dispose();
     },
 );
 
