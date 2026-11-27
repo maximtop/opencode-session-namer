@@ -460,6 +460,9 @@ export function createRenamer(deps: RenamerDeps) {
                 releaseScheduled(sessionID);
                 return;
             }
+            if (rec) {
+                rec.renamedFromDefault = isDefault;
+            }
             log('info', 'renamed session', { sessionID, title: safe });
             await markProcessed(sessionID, safe);
             return;
