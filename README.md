@@ -33,7 +33,7 @@ An [opencode](https://opencode.ai) plugin that gives sessions meaningful names, 
 
 - **Renames exactly once per session** (tracked in a state file, survives restarts). Later manual renames are never overridden.
 - **A manual/external title is never replaced.** The plugin tracks title-change events: the first title set right after the first user message is assumed to be opencode's auto-title and may be replaced; any other title marks the session as foreign.
-- The rename fires ~10s after the first user message (falling back to the first `session.idle` for sessions restored before the plugin saw them). If a title recorded as the built-in auto-title is written again over ours before the first idle, our title is re-applied exactly once; a change from any other source — including a manual rename — wins immediately and closes that correction window. After the first idle, later changes are never touched.
+- The rename fires ~10s after the first user message (falling back to the first `session.idle` for sessions restored before the plugin saw them). If a title recorded as the built-in auto-title is written again over ours before the first idle, our title is re-applied exactly once. The same applies when the rename replaced the still-default title: the first title to land over ours before the first idle is treated as the unobserved auto-title. A change from any other source wins immediately and closes that correction window. After the first idle, later changes are never touched.
 - No LLM calls by default; naming is deterministic. Failures never break the session — the plugin just logs and moves on.
 
 On V2, a restored session may expose only history after compaction. When
@@ -43,7 +43,9 @@ used as a substitute. New sessions retain normal automatic naming.
 
 Pending naming is cancelled when a session is deleted or the plugin is
 unloaded. A title whose auto-title provenance was not observed remains
-protected; the existing early-manual-title ambiguity is unchanged.
+protected, except the first title to land over ours before the first idle
+when the rename replaced the default title: it is assumed to be the
+auto-title. The existing early-manual-title ambiguity is unchanged.
 
 Transient ownership and replay caches retain at most 1,024 recent sessions
 per plugin instance. Retained rename history still uses the existing state

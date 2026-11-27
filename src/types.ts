@@ -188,6 +188,13 @@ export interface TrackedSession {
     foreign: boolean;
 
     /**
+     * True when the rename replaced the host's unassigned title. No
+     * auto-title was observed then, so the first title change before the
+     * first idle is that auto-title.
+     */
+    renamedFromDefault: boolean;
+
+    /**
      * Whether a rename has already been scheduled for this session.
      */
     scheduled: boolean;

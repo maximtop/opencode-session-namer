@@ -875,6 +875,7 @@ describe('classifyTitleChange (title provenance)', () => {
         sawUserMessage: false,
         autoTitle: undefined,
         foreign: false,
+        renamedFromDefault: false,
         scheduled: false,
         lastTitle: undefined,
         renameAttempts: 0,
@@ -2113,6 +2114,102 @@ describe.each(['v1', 'v2'] as const)('%s late correction protection', (generatio
         },
     );
 });
+
+describe.each(['v1', 'v2'] as const)(
+    '%s late auto-title after a rename from the default title',
+    (generation) => {
+        it('re-applies our title when the first auto-title lands late', async () => {
+            await writeConfig({});
+            const session = freshSession({
+                title: generation === 'v1' ? 'New session' : '',
+            });
+            const v1 = makeClient({ session, firstUserText: 'Fix crash' });
+            const v2 = makeV2Context(session, [
+                { type: 'user', text: 'Fix crash', time: { created: 1 } },
+            ]);
+            const base = generation === 'v1'
+                ? new V1Host(v1.client) : new V2Host(v2.context);
+            const hooks = await createLifecycle(base);
+            const writeCount = () => v1.updates.length + v2.writes.length;
+            const titleEvent = (title: string) => hooks.event({ event: {
+                type: EventType.SessionUpdated,
+                properties: { info: { ...session, title } },
+            } });
+            try {
+                await hooks.event({ event: {
+                    type: EventType.SessionCreated,
+                    properties: { info: { ...session } },
+                } });
+                await hooks.event({ event: {
+                    type: EventType.MessageUpdated,
+                    properties: {
+                        info: { role: 'user', sessionID: session.id },
+                    },
+                } });
+                // the rename replaces the default title before the
+                // built-in auto-title exists, so none was recorded
+                expect(await waitFor(() => writeCount() === 1)).toBe(true);
+                expect(session.title).toBe('[browser-extension] Fix crash');
+                // the first title that lands over ours before the first
+                // idle is that unobserved auto-title, not a manual rename
+                session.title = 'Fix the crash';
+                await titleEvent(session.title);
+                expect(await waitFor(() => writeCount() === 2)).toBe(true);
+                expect(session.title).toBe('[browser-extension] Fix crash');
+                // the single correction window is closed afterwards
+                session.title = 'Fix the crash';
+                await titleEvent(session.title);
+                await sleep(300);
+                expect(writeCount()).toBe(2);
+                expect(session.title).toBe('Fix the crash');
+            } finally {
+                await hooks.dispose();
+            }
+        });
+
+        it('leaves an auto-title that lands after the first idle', async () => {
+            await writeConfig({});
+            const session = freshSession({
+                title: generation === 'v1' ? 'New session' : '',
+            });
+            const v1 = makeClient({ session, firstUserText: 'Fix crash' });
+            const v2 = makeV2Context(session, [
+                { type: 'user', text: 'Fix crash', time: { created: 1 } },
+            ]);
+            const base = generation === 'v1'
+                ? new V1Host(v1.client) : new V2Host(v2.context);
+            const hooks = await createLifecycle(base);
+            const writeCount = () => v1.updates.length + v2.writes.length;
+            try {
+                await hooks.event({ event: {
+                    type: EventType.SessionCreated,
+                    properties: { info: { ...session } },
+                } });
+                await hooks.event({ event: {
+                    type: EventType.MessageUpdated,
+                    properties: {
+                        info: { role: 'user', sessionID: session.id },
+                    },
+                } });
+                expect(await waitFor(() => writeCount() === 1)).toBe(true);
+                await hooks.event({ event: {
+                    type: EventType.SessionIdle,
+                    properties: { sessionID: session.id },
+                } });
+                session.title = 'Fix the crash';
+                await hooks.event({ event: {
+                    type: EventType.SessionUpdated,
+                    properties: { info: { ...session } },
+                } });
+                await sleep(300);
+                expect(writeCount()).toBe(1);
+                expect(session.title).toBe('Fix the crash');
+            } finally {
+                await hooks.dispose();
+            }
+        });
+    },
+);
 
 it('V2 processes manual-title events while a correction read is pending', async () => {
     await writeConfig({});

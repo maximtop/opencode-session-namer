@@ -132,6 +132,7 @@ export const createLifecycle = async (host: NamingHost) => {
                 sawUserMessage: false,
                 autoTitle: undefined,
                 foreign: false,
+                renamedFromDefault: false,
                 scheduled: false,
                 lastTitle: undefined,
                 renameAttempts: 0,
@@ -257,7 +258,14 @@ export const createLifecycle = async (host: NamingHost) => {
     ): Promise<void> => {
         const applied = state.appliedTitles[sessionID];
         const rec = tracked.get(sessionID);
-        if (!applied || rec?.autoTitle === undefined) {
+        if (!rec) {
+            return;
+        }
+        // A rename that replaced the host's unassigned title saw no
+        // auto-title; the first title change before the first idle is it.
+        const lateAutoTitle = rec.autoTitle === undefined
+            && rec.renamedFromDefault === true;
+        if (!applied || (rec.autoTitle === undefined && !lateAutoTitle)) {
             return;
         }
         signal.throwIfAborted();
@@ -272,7 +280,7 @@ export const createLifecycle = async (host: NamingHost) => {
         if (!current || current.title === applied) {
             return;
         }
-        if (current.title !== rec.autoTitle) {
+        if (current.title !== (rec.autoTitle ?? info.title)) {
             await forgetAppliedTitle(sessionID);
             return;
         }
@@ -308,7 +316,16 @@ export const createLifecycle = async (host: NamingHost) => {
             return;
         }
         const rec = tracked.get(sessionID);
-        if (rec?.autoTitle === undefined || info.title !== rec.autoTitle) {
+        if (!rec) {
+            await forgetAppliedTitle(sessionID);
+            return;
+        }
+        // An unobserved auto-title after a rename from the default title is
+        // the first change before the first idle — treat it as the
+        // auto-title, matching the pre-rename classification.
+        const lateAutoTitle = rec.autoTitle === undefined
+            && rec.renamedFromDefault;
+        if (!lateAutoTitle && info.title !== rec.autoTitle) {
             await forgetAppliedTitle(sessionID);
             return;
         }
